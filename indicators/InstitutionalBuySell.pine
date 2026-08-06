@@ -1,72 +1,74 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// Non-repainting confirmed-pivot engine. Educational use only — not financial advice.
+// Non-repainting major-swing engine. Educational use only — not financial advice.
 //@version=5
-indicator("Institutional Algo Buy/Sell", shorttitle="IALGO", overlay=true, max_labels_count=500, max_boxes_count=50, max_lines_count=50)
+indicator("Institutional Algo Buy/Sell", shorttitle="IALGO", overlay=true, max_labels_count=500, max_boxes_count=20, max_lines_count=40)
 
 //══════════════════════════════════════════════════════════════════════════════
 // INPUTS
 //══════════════════════════════════════════════════════════════════════════════
-grpSig = "Signal Engine (Non-Repaint)"
-leftBars      = input.int(5, "Pivot Left", minval=2, maxval=15, group=grpSig, tooltip="Bars to the left of the swing. Higher = major swings only.")
-rightBars     = input.int(3, "Pivot Right (confirm)", minval=2, maxval=10, group=grpSig, tooltip="Bars that must close beyond the swing before a signal. No repaint after confirm.")
-minSwingAtr   = input.float(1.0, "Min Swing (ATR)", minval=0.4, step=0.1, group=grpSig, tooltip="Ignore tiny pivots. 1.0–1.5 cuts most fake turns.")
-minReverseAtr = input.float(0.8, "Min Move From Last Signal (ATR)", minval=0.3, step=0.1, group=grpSig)
+grpSig = "Major Swing Engine (Non-Repaint)"
+leftBars      = input.int(8, "Pivot Left", minval=3, maxval=20, group=grpSig, tooltip="Higher = only major swings (bigger moves).")
+rightBars     = input.int(4, "Pivot Right (confirm)", minval=2, maxval=12, group=grpSig, tooltip="Confirmation lag. Signal does not repaint after this.")
+minSwingAtr   = input.float(1.5, "Min Swing (ATR)", minval=0.8, step=0.1, group=grpSig)
+minSwingAdr   = input.float(0.28, "Min Swing (ADR fraction)", minval=0.1, step=0.02, group=grpSig, tooltip="Swing must also be ≥ this fraction of average day range.")
+minReverseAtr = input.float(1.2, "Min Reverse From Last Signal (ATR)", minval=0.5, step=0.1, group=grpSig)
+mustTouchZone = input.bool(true, "Signal must touch Buy/Sell Zone", group=grpSig)
 rsiLen        = input.int(14, "RSI Length", group=grpSig)
-rsiBuyMax     = input.int(40, "BUY: RSI must be ≤", minval=20, maxval=50, group=grpSig)
-rsiSellMin    = input.int(60, "SELL: RSI must be ≥", minval=50, maxval=80, group=grpSig)
-useDivFilter  = input.bool(true, "Prefer RSI Divergence (bonus)", group=grpSig)
-useTrendGate  = input.bool(true, "Trend Gate (block counter-trend fakes)", group=grpSig)
+passScore     = input.float(80.0, "Min Score to Signal", minval=70, maxval=95, group=grpSig)
 adxLen        = input.int(14, "ADX Length", group=grpSig)
-adxTrend      = input.float(22.0, "ADX Trend Threshold", group=grpSig)
-adxChop       = input.float(18.0, "ADX Chop Threshold", group=grpSig)
-adxExtreme    = input.float(32.0, "ADX Extreme Threshold", group=grpSig)
+adxChop       = input.float(16.0, "ADX Chop <", group=grpSig)
+adxTrend      = input.float(23.0, "ADX Trend ≥", group=grpSig)
+adxExtreme    = input.float(35.0, "ADX Extreme ≥", group=grpSig)
 
-grpZone = "Intraday Zones / Projections"
-orMinutes     = input.int(30, "Opening Range (minutes)", minval=5, maxval=90, group=grpZone)
-adrLen        = input.int(14, "ADR Length (days)", minval=5, maxval=30, group=grpZone)
+grpZone = "Zones & Day Projection"
+orMinutes     = input.int(30, "Opening Range Minutes", minval=5, maxval=90, group=grpZone)
+adrLen        = input.int(14, "ADR Days", minval=5, maxval=30, group=grpZone)
+zoneWidthAtr  = input.float(0.45, "Zone Width (ATR)", minval=0.2, step=0.05, group=grpZone)
 showZones     = input.bool(true, "Show Buy/Sell Zones", group=grpZone)
-showVwap      = input.bool(true, "Show Session VWAP", group=grpZone)
-showProj      = input.bool(true, "Show Projected Day High/Low", group=grpZone)
-showTradeLvls = input.bool(true, "Show Active Entry/Stop/Targets", group=grpZone)
+showVwap      = input.bool(true, "Show VWAP", group=grpZone)
+showProj      = input.bool(true, "Show Projected High/Low", group=grpZone)
+showTradeLvls = input.bool(true, "Show Entry/Stop/Targets", group=grpZone)
 
-grpRisk = "Trade Management"
-stopAtrMult   = input.float(0.6, "Stop Distance (ATR beyond swing)", minval=0.2, step=0.1, group=grpRisk)
-t1R           = input.float(1.5, "Target 1 (R-multiple)", minval=0.5, step=0.1, group=grpRisk)
-t2R           = input.float(2.5, "Target 2 (R-multiple)", minval=1.0, step=0.1, group=grpRisk)
+grpRisk = "Trade Idea Levels"
+stopAtrMult   = input.float(0.55, "Stop beyond swing (ATR)", minval=0.2, step=0.05, group=grpRisk)
+t1R           = input.float(1.5, "Target 1 R", minval=0.8, step=0.1, group=grpRisk)
+t2R           = input.float(2.5, "Target 2 R", minval=1.2, step=0.1, group=grpRisk)
 
-grpVis = "Visuals"
-bullCol = input.color(#089981, "Buy", group=grpVis)
-bearCol = input.color(#F23645, "Sell", group=grpVis)
-zoneBuy = input.color(color.new(#089981, 88), "Buy Zone", group=grpVis)
-zoneSell= input.color(color.new(#F23645, 88), "Sell Zone", group=grpVis)
+grpVis = "Colors"
+bullCol  = input.color(#089981, "Bull", group=grpVis)
+bearCol  = input.color(#F23645, "Bear", group=grpVis)
+zoneBuyC = input.color(color.new(#089981, 85), "Buy Zone", group=grpVis)
+zoneSellC= input.color(color.new(#F23645, 85), "Sell Zone", group=grpVis)
+
+FS = size.small  // all dashboard text same size
 
 //══════════════════════════════════════════════════════════════════════════════
-// CORE SERIES
+// CORE
 //══════════════════════════════════════════════════════════════════════════════
 atr = ta.atr(14)
 ema9  = ta.ema(close, 9)
 ema21 = ta.ema(close, 21)
 ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
 rsi = ta.rsi(close, rsiLen)
 [diPlus, diMinus, adx] = ta.dmi(adxLen, adxLen)
-
 bullStack = ema9 > ema21 and ema21 > ema50
 bearStack = ema9 < ema21 and ema21 < ema50
 diBull = diPlus > diMinus
 diBear = diMinus > diPlus
 
 //══════════════════════════════════════════════════════════════════════════════
-// SESSION / VWAP / OPENING RANGE / ADR PROJECTION
+// SESSION STRUCTURE
 //══════════════════════════════════════════════════════════════════════════════
 newDay = ta.change(time("D")) != 0
 
 var float dayOpen = na
 var float dayHigh = na
-var float dayLow  = na
-var int   dayStartBar = na
+var float dayLow = na
+var int dayStartBar = na
 var float orHigh = na
 var float orLow = na
-var bool  orLocked = false
+var bool orLocked = false
 
 if newDay
     dayOpen := open
@@ -90,47 +92,102 @@ if not orLocked
     if barsFromOpen + 1 >= orBars
         orLocked := true
 
-// Session VWAP
+orMid = (nz(orHigh, high) + nz(orLow, low)) * 0.5
+orRange = math.max(nz(orHigh, high) - nz(orLow, low), syminfo.mintick)
+
+// Session VWAP + σ
 var float sumPV = 0.0
 var float sumV = 0.0
+var float sumP2V = 0.0
 if newDay
     sumPV := hlc3 * volume
     sumV := volume
+    sumP2V := hlc3 * hlc3 * volume
 else
     sumPV += hlc3 * volume
     sumV += volume
+    sumP2V += hlc3 * hlc3 * volume
+
 vwap = sumV > 0 ? sumPV / sumV : hlc3
+variance = sumV > 0 ? math.max(sumP2V / sumV - vwap * vwap, 0.0) : 0.0
+sigma = math.sqrt(variance)
+vwapU1 = vwap + sigma
+vwapU2 = vwap + 2.0 * sigma
+vwapL1 = vwap - sigma
+vwapL2 = vwap - 2.0 * sigma
 
-// Daily ADR via non-lookahead security
-dailyRange = request.security(syminfo.tickerid, "D", high - low, barmerge.gaps_off, barmerge.lookahead_off)
+// Prior day levels (confirmed, no lookahead)
+pdh = request.security(syminfo.tickerid, "D", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+pdl = request.security(syminfo.tickerid, "D", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+pdc = request.security(syminfo.tickerid, "D", close[1], barmerge.gaps_off, barmerge.lookahead_off)
 adr = request.security(syminfo.tickerid, "D", ta.sma(high - low, adrLen), barmerge.gaps_off, barmerge.lookahead_off)
+adrSafe = math.max(nz(adr, atr * 6), atr * 2)
 
-// Projected day high/low (institutional hybrid: Open±ADR + IB expansion)
-orRange = nz(orHigh - orLow, atr)
-ibProjHigh = nz(orHigh, dayHigh) + orRange
-ibProjLow  = nz(orLow, dayLow) - orRange
-adrProjHigh = nz(dayOpen, open) + nz(adr, atr * 4)
-adrProjLow  = nz(dayOpen, open) - nz(adr, atr * 4)
-projHigh = math.max(adrProjHigh, ibProjHigh)
-projLow  = math.min(adrProjLow, ibProjLow)
+//══════════════════════════════════════════════════════════════════════════════
+// PROJECTED DAY HIGH / LOW / RANGE  (ADR + Initial Balance expansion)
+//══════════════════════════════════════════════════════════════════════════════
+// Classic desk projection from session open
+adrHigh = nz(dayOpen, open) + adrSafe
+adrLow  = nz(dayOpen, open) - adrSafe
+// Initial-balance expansion (active once OR locks; until then use ADR only)
+ibHigh = nz(orHigh, high) + orRange
+ibLow  = nz(orLow, low) - orRange
+// Blended projection: use the wider structural target, but never inside already-printed extremes incorrectly
+projHigh = orLocked ? math.max(adrHigh, ibHigh, nz(dayHigh, high)) : math.max(adrHigh, nz(dayHigh, high))
+projLow  = orLocked ? math.min(adrLow, ibLow, nz(dayLow, low)) : math.min(adrLow, nz(dayLow, low))
+// Keep projection at least ADR-wide around open
+if projHigh - projLow < adrSafe
+    mid = nz(dayOpen, open)
+    projHigh := mid + adrSafe * 0.5
+    projLow := mid - adrSafe * 0.5
 projRange = projHigh - projLow
+dayRangeSoFar = nz(dayHigh, high) - nz(dayLow, low)
 
-// Dynamic buy/sell zones for the day (tighten as price discovers extremes)
-buyTopRaw = math.min(vwap, math.min(nz(orLow, low), nz(dayOpen, open)))
-buyBotRaw = math.min(nz(dayLow, low), projLow)
-buyZoneTop = math.max(buyTopRaw, buyBotRaw)
-buyZoneBot = math.min(buyTopRaw, buyBotRaw)
-sellBotRaw = math.max(vwap, math.max(nz(orHigh, high), nz(dayOpen, open)))
-sellTopRaw = math.max(nz(dayHigh, high), projHigh)
-sellZoneTop = math.max(sellTopRaw, sellBotRaw)
-sellZoneBot = math.min(sellTopRaw, sellBotRaw)
+//══════════════════════════════════════════════════════════════════════════════
+// TOP-NOTCH BUY / SELL ZONES
+// Demand/supply bands from VWAP σ + Opening Range + prior day liquidity.
+// Kept narrow (ATR-width) so they are actionable entry pools, not full-chart slabs.
+//══════════════════════════════════════════════════════════════════════════════
+zw = math.max(atr * zoneWidthAtr, syminfo.mintick * 10)
 
-inBuyZone  = low <= buyZoneTop
-inSellZone = high >= sellZoneBot
+// Liquidity magnets
+demandMagnet = (math.min(vwapL1, vwap) + math.min(nz(orLow, low), vwap) + math.min(math.max(nz(pdl, low), vwapL2), vwap)) / 3.0
+supplyMagnet = (math.max(vwapU1, vwap) + math.max(nz(orHigh, high), vwap) + math.max(math.min(nz(pdh, high), vwapU2), vwap)) / 3.0
+
+// Base bands around magnets, forced to correct side of VWAP
+buyZoneTop = math.min(demandMagnet + zw * 0.30, vwap - atr * 0.08)
+buyZoneBot = buyZoneTop - zw
+sellZoneBot = math.max(supplyMagnet - zw * 0.30, vwap + atr * 0.08)
+sellZoneTop = sellZoneBot + zw
+
+// Once OR is locked, snap zones to true session liquidity pools
+if orLocked
+    buySnap = math.min(nz(orLow, low), vwapL1)
+    buyZoneTop := math.min(buySnap + zw * 0.20, vwap - atr * 0.08)
+    buyZoneBot := math.min(math.min(nz(dayLow, low), buySnap), buyZoneTop) - zw * 0.10
+    if buyZoneTop - buyZoneBot < atr * 0.25
+        buyZoneBot := buyZoneTop - atr * 0.25
+
+    sellSnap = math.max(nz(orHigh, high), vwapU1)
+    sellZoneBot := math.max(sellSnap - zw * 0.20, vwap + atr * 0.08)
+    sellZoneTop := math.max(math.max(nz(dayHigh, high), sellSnap), sellZoneBot) + zw * 0.10
+    if sellZoneTop - sellZoneBot < atr * 0.25
+        sellZoneTop := sellZoneBot + atr * 0.25
+
+// Keep buy below VWAP and sell above VWAP
+buyZoneTop := math.min(buyZoneTop, vwap - atr * 0.05)
+buyZoneBot := math.min(buyZoneBot, buyZoneTop - atr * 0.2)
+sellZoneBot := math.max(sellZoneBot, vwap + atr * 0.05)
+sellZoneTop := math.max(sellZoneTop, sellZoneBot + atr * 0.2)
+
+inBuyZone = low <= buyZoneTop and low >= buyZoneBot - atr * 0.1
+inSellZone = high >= sellZoneBot and high <= sellZoneTop + atr * 0.1
 
 plot(showVwap ? vwap : na, "VWAP", color=color.new(#FF9800, 0), linewidth=2)
-plot(showProj ? projHigh : na, "Proj High", color=color.new(bearCol, 55), style=plot.style_linebr, linewidth=1)
-plot(showProj ? projLow : na, "Proj Low", color=color.new(bullCol, 55), style=plot.style_linebr, linewidth=1)
+plot(showVwap ? vwapU1 : na, "VWAP+1σ", color=color.new(bearCol, 70), linewidth=1)
+plot(showVwap ? vwapL1 : na, "VWAP-1σ", color=color.new(bullCol, 70), linewidth=1)
+plot(showProj ? projHigh : na, "Proj High", color=color.new(bearCol, 45), style=plot.style_linebr, linewidth=1)
+plot(showProj ? projLow : na, "Proj Low", color=color.new(bullCol, 45), style=plot.style_linebr, linewidth=1)
 
 var box bBuy = na
 var box bSell = na
@@ -139,34 +196,82 @@ if showZones and barstate.islast
         box.delete(bBuy)
     if not na(bSell)
         box.delete(bSell)
-    left = nz(dayStartBar, bar_index - 40)
-    bBuy := box.new(left, buyZoneTop, bar_index + 5, buyZoneBot, border_color=bullCol, bgcolor=zoneBuy, border_width=1, text="BUY ZONE", text_size=size.tiny, text_color=bullCol, text_halign=text.align_right)
-    bSell := box.new(left, sellZoneTop, bar_index + 5, sellZoneBot, border_color=bearCol, bgcolor=zoneSell, border_width=1, text="SELL ZONE", text_size=size.tiny, text_color=bearCol, text_halign=text.align_right)
+    left = nz(dayStartBar, bar_index - 30)
+    bBuy := box.new(left, buyZoneTop, bar_index + 4, buyZoneBot, border_color=bullCol, bgcolor=zoneBuyC, border_width=1, text="BUY ZONE", text_size=FS, text_color=bullCol, text_halign=text.align_right, text_valign=text.align_center)
+    bSell := box.new(left, sellZoneTop, bar_index + 4, sellZoneBot, border_color=bearCol, bgcolor=zoneSellC, border_width=1, text="SELL ZONE", text_size=FS, text_color=bearCol, text_halign=text.align_right, text_valign=text.align_center)
 
 //══════════════════════════════════════════════════════════════════════════════
-// BIAS (chart timeframe)
-// Buy | Sell | Neutral | Chop | Extremely Bullish | Extremely Bearish
+// LIVE BIAS  +  PROJECTED DAY BIAS
+// Bullish | Extremely Bullish | Neutral | Chop | Bearish | Extremely Bearish
 //══════════════════════════════════════════════════════════════════════════════
-bias = "Neutral"
-if adx < adxChop
-    bias := "Chop"
-else if adx >= adxExtreme and bullStack and diBull and close > vwap
-    bias := "Extremely Bullish"
-else if adx >= adxExtreme and bearStack and diBear and close < vwap
-    bias := "Extremely Bearish"
+liveBias = "Neutral"
+if adx < adxChop and not bullStack and not bearStack
+    liveBias := "Chop"
+else if adx >= adxExtreme and bullStack and diBull and close > vwap and close > ema50
+    liveBias := "Extremely Bullish"
+else if adx >= adxExtreme and bearStack and diBear and close < vwap and close < ema50
+    liveBias := "Extremely Bearish"
 else if bullStack and diBull and close > ema21
-    bias := "Buy"
+    liveBias := "Bullish"
 else if bearStack and diBear and close < ema21
-    bias := "Sell"
+    liveBias := "Bearish"
+else if close > vwap and close > nz(dayOpen, open) and ema9 > ema21
+    liveBias := "Bullish"
+else if close < vwap and close < nz(dayOpen, open) and ema9 < ema21
+    liveBias := "Bearish"
 else
-    bias := "Neutral"
+    liveBias := adx < adxChop ? "Chop" : "Neutral"
 
-biasCol = bias == "Extremely Bullish" ? #00E676 : bias == "Buy" ? bullCol : bias == "Extremely Bearish" ? #FF1744 : bias == "Sell" ? bearCol : bias == "Chop" ? #FFD600 : #B0BEC5
+// Day bias from session structure (open, VWAP, OR break, ADR consumption)
+upTravel = nz(dayHigh, high) - nz(dayOpen, open)
+dnTravel = nz(dayOpen, open) - nz(dayLow, low)
+adrUpPct = upTravel / adrSafe
+adrDnPct = dnTravel / adrSafe
+aboveVwap = close > vwap
+belowVwap = close < vwap
+brokeOrHigh = orLocked and close > nz(orHigh, high)
+brokeOrLow  = orLocked and close < nz(orLow, low)
+insideOr = orLocked and close <= nz(orHigh, high) and close >= nz(orLow, low)
+
+dayBias = "Neutral"
+if insideOr and adx < adxTrend and adrUpPct < 0.45 and adrDnPct < 0.45
+    dayBias := "Chop"
+else if brokeOrHigh and aboveVwap and adrUpPct >= 0.55 and upTravel > dnTravel
+    dayBias := adrUpPct >= 0.85 or (close >= projHigh - atr) ? "Extremely Bullish" : "Bullish"
+else if brokeOrLow and belowVwap and adrDnPct >= 0.55 and dnTravel > upTravel
+    dayBias := adrDnPct >= 0.85 or (close <= projLow + atr) ? "Extremely Bearish" : "Bearish"
+else if aboveVwap and close > nz(dayOpen, open) and upTravel >= dnTravel
+    dayBias := "Bullish"
+else if belowVwap and close < nz(dayOpen, open) and dnTravel >= upTravel
+    dayBias := "Bearish"
+else if insideOr
+    dayBias := "Chop"
+else
+    dayBias := "Neutral"
+
+f_bias_col(b) =>
+    b == "Extremely Bullish" ? #00E676 : b == "Bullish" ? bullCol : b == "Extremely Bearish" ? #FF1744 : b == "Bearish" ? bearCol : b == "Chop" ? #FFD600 : #B0BEC5
+
+liveBiasCol = f_bias_col(liveBias)
+dayBiasCol = f_bias_col(dayBias)
+
+// What to do?
+whatToDo = "Wait for structure"
+if liveBias == "Extremely Bullish" or dayBias == "Extremely Bullish"
+    whatToDo := "Buy on dips into BUY ZONE — trail longs"
+else if liveBias == "Bullish" or (dayBias == "Bullish" and liveBias != "Bearish" and liveBias != "Extremely Bearish")
+    whatToDo := "Buy on dips — avoid shorting strength"
+else if liveBias == "Extremely Bearish" or dayBias == "Extremely Bearish"
+    whatToDo := "Sell on rips into SELL ZONE — trail shorts"
+else if liveBias == "Bearish" or (dayBias == "Bearish" and liveBias != "Bullish" and liveBias != "Extremely Bullish")
+    whatToDo := "Sell on rips — avoid buying weakness"
+else if liveBias == "Chop" or dayBias == "Chop"
+    whatToDo := "Range day — fade BUY ZONE / SELL ZONE only"
+else
+    whatToDo := "Neutral — wait OR break or VWAP hold"
 
 //══════════════════════════════════════════════════════════════════════════════
-// NON-REPAINTING PIVOTS + RSI DIVERGENCE
-// Signal is only evaluated on the confirmation bar (rightBars after the swing).
-// Label is drawn at the historical swing bar — price does not change afterward.
+// NON-REPAINT MAJOR PIVOT SIGNALS (bigger swings only)
 //══════════════════════════════════════════════════════════════════════════════
 ph = ta.pivothigh(high, leftBars, rightBars)
 pl = ta.pivotlow(low, leftBars, rightBars)
@@ -179,7 +284,6 @@ var float lastPhRsi = na
 var float lastPlRsi = na
 var float prevPhRsi = na
 var float prevPlRsi = na
-
 bearDiv = false
 bullDiv = false
 
@@ -199,28 +303,23 @@ if not na(pl)
     if not na(prevPl) and not na(prevPlRsi)
         bullDiv := lastPl < prevPl and lastPlRsi > prevPlRsi
 
-// Pivot candle metrics (at the actual swing bar)
 pHigh = high[rightBars]
 pLow = low[rightBars]
 pClose = close[rightBars]
 pOpen = open[rightBars]
 pRsi = rsi[rightBars]
 pRange = pHigh - pLow
-pUpper = pHigh - math.max(pOpen, pClose)
-pLower = math.min(pOpen, pClose) - pLow
-bullReject = pRange > 0 and pLower >= pRange * 0.45
-bearReject = pRange > 0 and pUpper >= pRange * 0.45
+bullReject = pRange > 0 and (math.min(pOpen, pClose) - pLow) >= pRange * 0.45
+bearReject = pRange > 0 and (pHigh - math.max(pOpen, pClose)) >= pRange * 0.45
 
-// Near day / projection extremes (institutional location filter)
-nearDayLow  = pLow <= nz(dayLow[rightBars], pLow) + atr * 0.35 or pLow <= projLow + atr * 0.5 or pLow <= buyZoneTop[rightBars]
-nearDayHigh = pHigh >= nz(dayHigh[rightBars], pHigh) - atr * 0.35 or pHigh >= projHigh - atr * 0.5 or pHigh >= sellZoneBot[rightBars]
+// Location quality at pivot
+pInBuy  = pLow <= buyZoneTop[rightBars] + atr * 0.1
+pInSell = pHigh >= sellZoneBot[rightBars] - atr * 0.1
+nearProjLow  = pLow <= projLow[rightBars] + atr * 0.75
+nearProjHigh = pHigh >= projHigh[rightBars] - atr * 0.75
 
-//══════════════════════════════════════════════════════════════════════════════
-// ALTERNATING ZIGZAG STATE — BUY then SELL then BUY … only
-//══════════════════════════════════════════════════════════════════════════════
-var int   lastSide = 0          // 1 buy, -1 sell
+var int lastSide = 0
 var float lastSigPrice = na
-var int   lastSigBar = na
 var float entryPrice = na
 var float stopPrice = na
 var float t1Price = na
@@ -228,57 +327,54 @@ var float t2Price = na
 var string activeTrade = "FLAT"
 var float confidence = 0.0
 
-swingFromLastPh = not na(lastPh) ? lastPh - pl : atr * 10
-swingFromLastPl = not na(lastPl) ? ph - lastPl : atr * 10
-moveFromLast = not na(lastSigPrice) ? math.abs((not na(pl) ? pl : ph) - lastSigPrice) : atr * 10
+isPL = not na(pl) and barstate.isconfirmed
+isPH = not na(ph) and barstate.isconfirmed
 
-// Trend gate: in strong trend, block weak counter-trend pivots unless at projection extreme + divergence/rejection
-allowLong = true
-allowShort = true
-if useTrendGate and adx >= adxTrend
-    if bias == "Extremely Bullish" or bias == "Buy"
-        // Shorts only at true exhaustion near proj high
-        allowShort := nearDayHigh and (bearDiv or bearReject or pRsi >= rsiSellMin)
-    if bias == "Extremely Bearish" or bias == "Sell"
-        allowLong := nearDayLow and (bullDiv or bullReject or pRsi <= rsiBuyMax)
+minSwingAbs = math.max(atr * minSwingAtr, adrSafe * minSwingAdr)
+swingUp = not na(lastPh) ? lastPh - pl : minSwingAbs * 2
+swingDn = not na(lastPl) ? ph - lastPl : minSwingAbs * 2
+revFromLastL = na(lastSigPrice) ? minSwingAbs * 2 : lastSigPrice - pl
+revFromLastS = na(lastSigPrice) ? minSwingAbs * 2 : ph - lastSigPrice
 
-// Candidate quality scores 0–100
+// Trend gate: in strong trend only take major counter-trend at projection + rejection/div
+allowL = true
+allowS = true
+if adx >= adxTrend
+    if liveBias == "Extremely Bullish" or liveBias == "Bullish" or dayBias == "Extremely Bullish"
+        allowS := (pInSell or nearProjHigh) and (bearDiv or bearReject or pRsi >= 65)
+    if liveBias == "Extremely Bearish" or liveBias == "Bearish" or dayBias == "Extremely Bearish"
+        allowL := (pInBuy or nearProjLow) and (bullDiv or bullReject or pRsi <= 35)
+
 longScore = 0.0
 shortScore = 0.0
 
-isPivotLow = not na(pl) and barstate.isconfirmed
-isPivotHigh = not na(ph) and barstate.isconfirmed
+if isPL
+    longScore += 20.0
+    longScore += swingUp >= minSwingAbs ? 20.0 : -100.0
+    longScore += revFromLastL >= atr * minReverseAtr or lastSide == 0 ? 10.0 : -100.0
+    longScore += (lastSide == 0 or lastSide == -1) ? 10.0 : -100.0
+    longScore += pRsi <= 38 ? 15.0 : pRsi <= 48 ? 6.0 : -25.0
+    longScore += (pInBuy or nearProjLow) ? 15.0 : mustTouchZone ? -100.0 : -20.0
+    longScore += bullReject ? 8.0 : 0.0
+    longScore += bullDiv ? 12.0 : 0.0
+    longScore += allowL ? 0.0 : -100.0
+    longScore += (liveBias != "Extremely Bearish" or nearProjLow) ? 0.0 : -40.0
 
-if isPivotLow
-    longScore += 25.0  // confirmed swing low
-    longScore += swingFromLastPh >= atr * minSwingAtr ? 15.0 : -50.0
-    longScore += pRsi <= rsiBuyMax ? 15.0 : pRsi <= 50 ? 5.0 : -20.0
-    longScore += nearDayLow ? 15.0 : -15.0
-    longScore += bullReject ? 10.0 : 0.0
-    longScore += bullDiv ? 15.0 : useDivFilter ? 0.0 : 5.0
-    longScore += (close > pLow and close >= pClose) ? 5.0 : 0.0  // structure holding after pivot
-    longScore += allowLong ? 0.0 : -100.0
-    longScore += (lastSide == 0 or lastSide == -1) ? 0.0 : -100.0
-    longScore += na(lastSigPrice) or (lastSigPrice - pl) >= atr * minReverseAtr or lastSide == 0 ? 0.0 : -100.0
+if isPH
+    shortScore += 20.0
+    shortScore += swingDn >= minSwingAbs ? 20.0 : -100.0
+    shortScore += revFromLastS >= atr * minReverseAtr or lastSide == 0 ? 10.0 : -100.0
+    shortScore += (lastSide == 0 or lastSide == 1) ? 10.0 : -100.0
+    shortScore += pRsi >= 62 ? 15.0 : pRsi >= 52 ? 6.0 : -25.0
+    shortScore += (pInSell or nearProjHigh) ? 15.0 : mustTouchZone ? -100.0 : -20.0
+    shortScore += bearReject ? 8.0 : 0.0
+    shortScore += bearDiv ? 12.0 : 0.0
+    shortScore += allowS ? 0.0 : -100.0
+    shortScore += (liveBias != "Extremely Bullish" or nearProjHigh) ? 0.0 : -40.0
 
-if isPivotHigh
-    shortScore += 25.0
-    shortScore += swingFromLastPl >= atr * minSwingAtr ? 15.0 : -50.0
-    shortScore += pRsi >= rsiSellMin ? 15.0 : pRsi >= 50 ? 5.0 : -20.0
-    shortScore += nearDayHigh ? 15.0 : -15.0
-    shortScore += bearReject ? 10.0 : 0.0
-    shortScore += bearDiv ? 15.0 : useDivFilter ? 0.0 : 5.0
-    shortScore += (close < pHigh and close <= pClose) ? 5.0 : 0.0
-    shortScore += allowShort ? 0.0 : -100.0
-    shortScore += (lastSide == 0 or lastSide == 1) ? 0.0 : -100.0
-    shortScore += na(lastSigPrice) or (ph - lastSigPrice) >= atr * minReverseAtr or lastSide == 0 ? 0.0 : -100.0
+buySignal = isPL and longScore >= passScore
+sellSignal = isPH and shortScore >= passScore
 
-// Pass threshold — institutional bar
-passScore = 70.0
-buySignal = isPivotLow and longScore >= passScore
-sellSignal = isPivotHigh and shortScore >= passScore
-
-// Resolve rare dual confirm same bar
 if buySignal and sellSignal
     if lastSide == -1
         sellSignal := false
@@ -293,30 +389,27 @@ if buySignal and sellSignal
 if buySignal
     lastSide := 1
     lastSigPrice := pl
-    lastSigBar := bar_index - rightBars
     entryPrice := pl
     stopPrice := pl - atr * stopAtrMult
-    riskL = entryPrice - stopPrice
+    riskL = math.max(entryPrice - stopPrice, syminfo.mintick)
     t1Price := entryPrice + riskL * t1R
-    t2Cand = entryPrice + riskL * t2R
-    t2Price := math.min(math.max(t2Cand, vwap + atr), math.max(sellZoneBot, projHigh))
+    t2Price := math.min(entryPrice + riskL * t2R, sellZoneBot)
+    t2Price := math.max(t2Price, math.min(projHigh, vwap + atr))
     activeTrade := "Long"
-    confidence := math.min(98.0, longScore)
+    confidence := math.min(99.0, longScore)
 
 if sellSignal
     lastSide := -1
     lastSigPrice := ph
-    lastSigBar := bar_index - rightBars
     entryPrice := ph
     stopPrice := ph + atr * stopAtrMult
-    riskS = stopPrice - entryPrice
+    riskS = math.max(stopPrice - entryPrice, syminfo.mintick)
     t1Price := entryPrice - riskS * t1R
-    t2CandS = entryPrice - riskS * t2R
-    t2Price := math.max(t2CandS, math.min(buyZoneTop, math.max(projLow, vwap - atr)))
+    t2Price := math.max(entryPrice - riskS * t2R, buyZoneTop)
+    t2Price := math.min(t2Price, math.max(projLow, vwap - atr))
     activeTrade := "Short"
-    confidence := math.min(98.0, shortScore)
+    confidence := math.min(99.0, shortScore)
 
-// Clear or update active trade lifecycle (non-repaint: based on close)
 if activeTrade == "Long"
     if not na(stopPrice) and close <= stopPrice
         activeTrade := "FLAT"
@@ -328,20 +421,15 @@ else if activeTrade == "Short"
     else if not na(t2Price) and close <= t2Price
         activeTrade := "FLAT"
 
-//══════════════════════════════════════════════════════════════════════════════
-// PLOT SIGNALS AT THE ACTUAL SWING (non-repaint once confirmed)
-//══════════════════════════════════════════════════════════════════════════════
 if buySignal
-    label.new(bar_index - rightBars, pl, "BUY", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_up, color=bullCol, textcolor=color.white, size=size.normal)
+    label.new(bar_index - rightBars, pl, "BUY", style=label.style_label_up, color=bullCol, textcolor=color.white, size=FS, yloc=yloc.price)
 if sellSignal
-    label.new(bar_index - rightBars, ph, "SELL", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_down, color=bearCol, textcolor=color.white, size=size.normal)
+    label.new(bar_index - rightBars, ph, "SELL", style=label.style_label_down, color=bearCol, textcolor=color.white, size=FS, yloc=yloc.price)
 
-// Active trade levels
 var line lnEntry = na
 var line lnStop = na
 var line lnT1 = na
 var line lnT2 = na
-
 if showTradeLvls and (buySignal or sellSignal)
     if not na(lnEntry)
         line.delete(lnEntry)
@@ -352,12 +440,11 @@ if showTradeLvls and (buySignal or sellSignal)
     if not na(lnT2)
         line.delete(lnT2)
     x1 = bar_index - rightBars
-    col = buySignal ? bullCol : bearCol
-    lnEntry := line.new(x1, entryPrice, bar_index + 20, entryPrice, color=col, style=line.style_solid, width=2)
-    lnStop := line.new(x1, stopPrice, bar_index + 20, stopPrice, color=color.new(bearCol, 0), style=line.style_dotted, width=1)
-    lnT1 := line.new(x1, t1Price, bar_index + 20, t1Price, color=color.new(bullCol, 20), style=line.style_dashed, width=1)
-    lnT2 := line.new(x1, t2Price, bar_index + 20, t2Price, color=color.new(bullCol, 0), style=line.style_dashed, width=1)
-
+    c = buySignal ? bullCol : bearCol
+    lnEntry := line.new(x1, entryPrice, bar_index + 15, entryPrice, color=c, width=2)
+    lnStop := line.new(x1, stopPrice, bar_index + 15, stopPrice, color=bearCol, style=line.style_dotted, width=1)
+    lnT1 := line.new(x1, t1Price, bar_index + 15, t1Price, color=bullCol, style=line.style_dashed, width=1)
+    lnT2 := line.new(x1, t2Price, bar_index + 15, t2Price, color=bullCol, style=line.style_dashed, width=1)
 if showTradeLvls and not na(lnEntry) and not (buySignal or sellSignal)
     line.set_x2(lnEntry, bar_index + 2)
     if not na(lnStop)
@@ -367,31 +454,11 @@ if showTradeLvls and not na(lnEntry) and not (buySignal or sellSignal)
     if not na(lnT2)
         line.set_x2(lnT2, bar_index + 2)
 
-plot(ema21, "EMA 21", color=color.new(#787B86, 55))
+plot(ema21, "EMA21", color=color.new(#78909C, 60))
 
 //══════════════════════════════════════════════════════════════════════════════
-// WHAT TO DO?
+// CURRENT TRADE IDEA (bottom right)
 //══════════════════════════════════════════════════════════════════════════════
-whatToDo = "Wait"
-if activeTrade == "Long"
-    whatToDo := close <= stopPrice ? "Long stopped — wait SELL setup" : close >= t2Price ? "Long T2 hit — take profit / wait SELL" : close >= t1Price ? "Long T1 hit — trail / bank partials" : "Hold Long — manage to T1/T2"
-else if activeTrade == "Short"
-    whatToDo := close >= stopPrice ? "Short stopped — wait BUY setup" : close <= t2Price ? "Short T2 hit — take profit / wait BUY" : close <= t1Price ? "Short T1 hit — trail / bank partials" : "Hold Short — manage to T1/T2"
-else
-    if bias == "Chop"
-        whatToDo := "Chop — only fade BUY/SELL zones, small size"
-    else if bias == "Extremely Bullish"
-        whatToDo := "Only BUY pullbacks into BUY ZONE"
-    else if bias == "Extremely Bearish"
-        whatToDo := "Only SELL rallies into SELL ZONE"
-    else if bias == "Buy"
-        whatToDo := "Bias Buy — wait BUY at zone / confirmed low"
-    else if bias == "Sell"
-        whatToDo := "Bias Sell — wait SELL at zone / confirmed high"
-    else
-        whatToDo := "Neutral — wait confirmed extreme + signal"
-
-// Pending suggestion when flat / looking for next
 sugTrade = activeTrade
 sugEntry = entryPrice
 sugStop = stopPrice
@@ -399,95 +466,83 @@ sugT1 = t1Price
 sugT2 = t2Price
 sugConf = confidence
 
-if activeTrade == "FLAT" or (activeTrade == "Long" and close <= nz(stopPrice, close)) or (activeTrade == "Short" and close >= nz(stopPrice, close))
-    // Suggest next planned trade from zones
-    if lastSide == 1 or (lastSide == 0 and (bias == "Sell" or bias == "Extremely Bearish"))
+if activeTrade == "FLAT"
+    // Plan next idea from bias + zones
+    wantShort = liveBias == "Bearish" or liveBias == "Extremely Bearish" or dayBias == "Bearish" or dayBias == "Extremely Bearish" or lastSide == 1
+    wantLong = liveBias == "Bullish" or liveBias == "Extremely Bullish" or dayBias == "Bullish" or dayBias == "Extremely Bullish" or lastSide == -1
+    if lastSide == 1 or (lastSide == 0 and wantShort and not wantLong)
         sugTrade := "Short"
         sugEntry := sellZoneBot
         sugStop := sellZoneTop + atr * stopAtrMult
-        r = sugStop - sugEntry
+        r = math.max(sugStop - sugEntry, syminfo.mintick)
         sugT1 := sugEntry - r * t1R
         sugT2 := math.max(sugEntry - r * t2R, projLow)
-        sugConf := bias == "Extremely Bearish" ? 75.0 : bias == "Sell" ? 65.0 : bias == "Chop" ? 55.0 : 50.0
+        sugConf := liveBias == "Extremely Bearish" or dayBias == "Extremely Bearish" ? 78.0 : liveBias == "Bearish" or dayBias == "Bearish" ? 68.0 : 58.0
     else
         sugTrade := "Long"
         sugEntry := buyZoneTop
         sugStop := buyZoneBot - atr * stopAtrMult
-        r = sugEntry - sugStop
+        r = math.max(sugEntry - sugStop, syminfo.mintick)
         sugT1 := sugEntry + r * t1R
         sugT2 := math.min(sugEntry + r * t2R, projHigh)
-        sugConf := bias == "Extremely Bullish" ? 75.0 : bias == "Buy" ? 65.0 : bias == "Chop" ? 55.0 : 50.0
-
-// If in active trade, suggestion mirrors live levels
-if activeTrade == "Long" and close > nz(stopPrice, close)
-    sugTrade := "Long"
-    sugEntry := entryPrice
-    sugStop := stopPrice
-    sugT1 := t1Price
-    sugT2 := t2Price
-    sugConf := confidence
-if activeTrade == "Short" and close < nz(stopPrice, close)
-    sugTrade := "Short"
+        sugConf := liveBias == "Extremely Bullish" or dayBias == "Extremely Bullish" ? 78.0 : liveBias == "Bullish" or dayBias == "Bullish" ? 68.0 : 58.0
+else
+    sugTrade := activeTrade
     sugEntry := entryPrice
     sugStop := stopPrice
     sugT1 := t1Price
     sugT2 := t2Price
     sugConf := confidence
 
-confLabel = sugConf >= 85 ? "VERY HIGH" : sugConf >= 75 ? "HIGH" : sugConf >= 65 ? "MEDIUM" : sugConf >= 55 ? "LOW" : "VERY LOW"
+confTxt = str.tostring(sugConf, "#.0") + "%"
 
 //══════════════════════════════════════════════════════════════════════════════
-// DASHBOARD TOP-RIGHT
-// Bias | Projected Day Range | Projected Day High/Low | What to do?
+// TOP-RIGHT DASHBOARD
 //══════════════════════════════════════════════════════════════════════════════
-var table topDash = table.new(position.top_right, 2, 5, bgcolor=color.new(#101418, 5), border_width=1, border_color=color.new(#546E7A, 40))
+var table topDash = table.new(position.top_right, 2, 6, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#455A64, 50))
 
 if barstate.islast
-    table.cell(topDash, 0, 0, "BIAS", text_color=color.gray, text_size=size.small)
-    table.cell(topDash, 1, 0, bias, text_color=biasCol, text_size=size.normal)
+    table.cell(topDash, 0, 0, "Live Bias", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 0, liveBias, text_color=liveBiasCol, text_size=FS)
 
-    table.cell(topDash, 0, 1, "Projected Day Range", text_color=color.gray, text_size=size.small)
-    table.cell(topDash, 1, 1, str.tostring(projRange, format.mintick), text_color=color.white, text_size=size.small)
+    table.cell(topDash, 0, 1, "Projected Day Bias", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 1, dayBias, text_color=dayBiasCol, text_size=FS)
 
-    table.cell(topDash, 0, 2, "Projected Day High", text_color=color.gray, text_size=size.small)
-    table.cell(topDash, 1, 2, str.tostring(projHigh, format.mintick), text_color=bearCol, text_size=size.small)
+    table.cell(topDash, 0, 2, "What to do?", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 2, whatToDo, text_color=color.white, text_size=FS)
 
-    table.cell(topDash, 0, 3, "Projected Day Low", text_color=color.gray, text_size=size.small)
-    table.cell(topDash, 1, 3, str.tostring(projLow, format.mintick), text_color=bullCol, text_size=size.small)
+    table.cell(topDash, 0, 3, "Projected Day High", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 3, str.tostring(projHigh, format.mintick), text_color=bearCol, text_size=FS)
 
-    table.cell(topDash, 0, 4, "What to do?", text_color=color.gray, text_size=size.small)
-    table.cell(topDash, 1, 4, whatToDo, text_color=color.white, text_size=size.tiny)
+    table.cell(topDash, 0, 4, "Projected Day Low", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 4, str.tostring(projLow, format.mintick), text_color=bullCol, text_size=FS)
+
+    table.cell(topDash, 0, 5, "Day Range", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 5, str.tostring(projRange, format.mintick), text_color=color.white, text_size=FS)
 
 //══════════════════════════════════════════════════════════════════════════════
-// DASHBOARD BOTTOM-RIGHT — Trade suggestion
+// BOTTOM-RIGHT — Current Trade Idea
 //══════════════════════════════════════════════════════════════════════════════
-var table botDash = table.new(position.bottom_right, 2, 7, bgcolor=color.new(#101418, 5), border_width=1, border_color=color.new(#546E7A, 40))
+var table botDash = table.new(position.bottom_right, 2, 6, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#455A64, 50))
 
 if barstate.islast
-    table.cell(botDash, 0, 0, "TRADE", text_color=color.gray, text_size=size.small)
-    table.cell(botDash, 1, 0, sugTrade, text_color=sugTrade == "Long" ? bullCol : sugTrade == "Short" ? bearCol : color.gray, text_size=size.normal)
+    table.cell(botDash, 0, 0, "Trade Idea", text_color=color.gray, text_size=FS)
+    table.cell(botDash, 1, 0, sugTrade, text_color=sugTrade == "Long" ? bullCol : sugTrade == "Short" ? bearCol : color.gray, text_size=FS)
 
-    table.cell(botDash, 0, 1, "Entry", text_color=color.gray, text_size=size.small)
-    table.cell(botDash, 1, 1, na(sugEntry) ? "—" : str.tostring(sugEntry, format.mintick), text_color=color.white, text_size=size.small)
+    table.cell(botDash, 0, 1, "Entry", text_color=color.gray, text_size=FS)
+    table.cell(botDash, 1, 1, na(sugEntry) ? "—" : str.tostring(sugEntry, format.mintick), text_color=color.white, text_size=FS)
 
-    table.cell(botDash, 0, 2, "Stop", text_color=color.gray, text_size=size.small)
-    table.cell(botDash, 1, 2, na(sugStop) ? "—" : str.tostring(sugStop, format.mintick), text_color=bearCol, text_size=size.small)
+    table.cell(botDash, 0, 2, "Stop", text_color=color.gray, text_size=FS)
+    table.cell(botDash, 1, 2, na(sugStop) ? "—" : str.tostring(sugStop, format.mintick), text_color=bearCol, text_size=FS)
 
-    table.cell(botDash, 0, 3, "Target 1", text_color=color.gray, text_size=size.small)
-    table.cell(botDash, 1, 3, na(sugT1) ? "—" : str.tostring(sugT1, format.mintick), text_color=bullCol, text_size=size.small)
+    table.cell(botDash, 0, 3, "Target 1", text_color=color.gray, text_size=FS)
+    table.cell(botDash, 1, 3, na(sugT1) ? "—" : str.tostring(sugT1, format.mintick), text_color=bullCol, text_size=FS)
 
-    table.cell(botDash, 0, 4, "Target 2", text_color=color.gray, text_size=size.small)
-    table.cell(botDash, 1, 4, na(sugT2) ? "—" : str.tostring(sugT2, format.mintick), text_color=bullCol, text_size=size.small)
+    table.cell(botDash, 0, 4, "Target 2", text_color=color.gray, text_size=FS)
+    table.cell(botDash, 1, 4, na(sugT2) ? "—" : str.tostring(sugT2, format.mintick), text_color=bullCol, text_size=FS)
 
-    table.cell(botDash, 0, 5, "Confidence", text_color=color.gray, text_size=size.small)
-    table.cell(botDash, 1, 5, confLabel + " (" + str.tostring(sugConf, "#.0") + ")", text_color=sugConf >= 75 ? bullCol : sugConf >= 60 ? color.orange : bearCol, text_size=size.small)
+    table.cell(botDash, 0, 5, "Confidence", text_color=color.gray, text_size=FS)
+    table.cell(botDash, 1, 5, confTxt, text_color=sugConf >= 80 ? bullCol : sugConf >= 65 ? color.orange : bearCol, text_size=FS)
 
-    table.cell(botDash, 0, 6, "R:R to T2", text_color=color.gray, text_size=size.small)
-    rr = not na(sugEntry) and not na(sugStop) and math.abs(sugEntry - sugStop) > 0 ? math.abs(sugT2 - sugEntry) / math.abs(sugEntry - sugStop) : na
-    table.cell(botDash, 1, 6, na(rr) ? "—" : str.tostring(rr, "#.00") + "R", text_color=color.white, text_size=size.small)
-
-//══════════════════════════════════════════════════════════════════════════════
-// ALERTS (confirmed bar only)
-//══════════════════════════════════════════════════════════════════════════════
-alertcondition(buySignal, title="BUY (confirmed pivot)", message="IALGO BUY confirmed on {{ticker}}")
-alertcondition(sellSignal, title="SELL (confirmed pivot)", message="IALGO SELL confirmed on {{ticker}}")
+alertcondition(buySignal, title="BUY major swing", message="IALGO BUY {{ticker}} @ {{close}}")
+alertcondition(sellSignal, title="SELL major swing", message="IALGO SELL {{ticker}} @ {{close}}")
