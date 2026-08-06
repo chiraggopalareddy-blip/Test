@@ -1,48 +1,42 @@
 # Institutional Algo Buy/Sell (TradingView)
 
-Non-repainting major-swing system with live/day bias, projections, top-notch zones, and a trade-idea panel.
+5m **intraday A+ scalp** system. Buy/Sell zones unchanged. Trade Idea fills **only** on a live A+ setup.
 
 ## File
 
 [`indicators/InstitutionalBuySell.pine`](indicators/InstitutionalBuySell.pine)
 
-## Top-right dashboard
+## Trade Idea (bottom-right)
 
-| Field | Meaning |
-|-------|---------|
-| Live Bias | Bullish / Extremely Bullish / Neutral / Chop / Bearish / Extremely Bearish |
-| Projected Day Bias | Session structure bias (OR break + VWAP + ADR travel) |
-| What to do? | Buy on dips / Sell on rips / fade range / wait |
-| Projected Day High/Low | ADR + Opening-Range expansion hybrid |
-| Day Range | Projected high − low |
+Populates **only** when an A+ Long/Short is active:
 
-All table text uses the same small font size.
+- Trade · Entry · Stop · Target 1 · Target 2 · Confidence (`xx.x%`)
 
-## Bottom-right — Current Trade Idea
+Otherwise every value is `-`.
 
-Trade · Entry · Stop · Target 1 · Target 2 · Confidence (`xx.x%`)  
-(R:R removed)
+Clears when stop/T2 hit, max hold bars, or session ends.
+
+## Signals (5m scalping)
+
+Session-only (default `0915-1525`), non-repainting, score ≥ **88**:
+
+1. **Primary:** liquidity sweep + reclaim inside Buy/Sell Zone + rejection + volume + bias  
+2. **Backup:** confirmed pivot in zone + rejection + RSI + volume + bias  
+
+Strict BUY → SELL alternation within the day. Resets each new session.
 
 ## Zones
 
-Buy/Sell zones are narrow ATR-width liquidity bands from:
+Unchanged — VWAP σ + Opening Range + prior day liquidity bands.
 
-- Session VWAP ± 1σ
-- Opening Range high/low
-- Prior day high/low
+## Dashboard (top-right)
 
-Snapped to session liquidity after the opening range locks — not full-chart slabs.
-
-## Signals
-
-- Confirmed pivots only (default Left 8 / Right 4) — **no repaint**
-- Min swing by ATR **and** ADR fraction → bigger moves only
-- Must touch Buy/Sell zone
-- Strict BUY → SELL alternation
-- Trend gate blocks weak counter-trend fakes
-- Score ≥ 80 to print
+Live Bias · Projected Day Bias · What to do? · Projected Day High/Low · Day Range  
+(all small, same font)
 
 ## Use
 
-Paste into TradingView Pine Editor → Add to chart (5m/15m recommended).  
-Still too many signals? Raise **Pivot Left** to `10` and **Min Swing ATR** to `1.8`.
+1. Chart timeframe: **5 minutes**
+2. Paste into Pine Editor → Add to chart
+3. Set **Intraday Session** for your market if not NSE
+4. Wait for A+ BUY/SELL — Trade Idea fills automatically
