@@ -1,51 +1,39 @@
-# Institutional Buy/Sell Confluence (TradingView)
+# Institutional Buy/Sell System (TradingView)
 
-Pine Script v5 indicator that fires **BUY / SELL** only when multiple institutional-style factors align.
-
-> No indicator has guaranteed “institutional accuracy.” This script scores confluence (structure, HTF bias, volume, order blocks, liquidity sweeps, trend stack) and only signals when the score clears your threshold.
+Pine Script v5 system for **when** and **where** to buy/sell on the current chart timeframe.
 
 ## File
 
 - [`indicators/InstitutionalBuySell.pine`](indicators/InstitutionalBuySell.pine)
 
-## How to use on TradingView
+## What changed (v2)
 
-1. Open TradingView → Pine Editor
-2. Paste the contents of `InstitutionalBuySell.pine`
-3. Click **Add to chart**
-4. Best on liquid symbols (indices, futures, large-cap stocks) on **5m / 15m / 1H**
+- **Alternating signals only:** BUY → SELL → BUY → … (no consecutive same-side signals)
+- **Fewer false signals:** confirmed swing pivots + zone + RSI/Stoch + rejection + VWAP stretch score
+- **Tops/bottoms:** signals prefer confirmed pivot highs/lows (marked on the actual turn bar)
+- **Bias table (top-right):** Extremely Bullish / Bullish / Neutral / Bearish / Extremely Bearish from **chart timeframe** EMAs + DMI/ADX + VWAP stretch
+- **Dynamic intraday zones:** BUY ZONE and SELL ZONE update through the session (Opening Range + session VWAP bands + day high/low)
 
-## What it measures (score 0–6)
+## How to use
 
-| Factor | Buy side | Sell side |
-|--------|----------|-----------|
-| Market structure / BOS–CHoCH | Bullish structure break | Bearish structure break |
-| Higher-timeframe bias | Price above HTF EMA | Price below HTF EMA |
-| Relative volume | High volume on green bar | High volume on red bar |
-| Order block retest | Price revisits bullish OB | Price revisits bearish OB |
-| Liquidity sweep | Sweep of lows + reclaim | Sweep of highs + reject |
-| EMA stack + RSI | 8 > 21 > 50 + RSI mid | 8 < 21 < 50 + RSI mid |
+1. Paste into TradingView Pine Editor → Add to chart
+2. Prefer liquid symbols on **5m / 15m**
+3. Read the dashboard:
+   - **BIAS** = directional conviction on this TF
+   - **Next** = which side is allowed next
+   - **Buy Zone / Sell Zone** = where to look for the next entry
+4. Take **BUY** only in/near the green BUY ZONE when a BUY label prints; take **SELL** only in/near the red SELL ZONE
 
-Default **minimum score = 4**. Raise it for fewer, higher-quality signals.
+## Suggested settings
 
-## Recommended settings
+| Goal | Pivot L/R | Min Score | Notes |
+|------|-----------|-----------|--------|
+| Fewer signals | 4 / 4 | 5 | More confirmation, more lag |
+| Tighter tops/bottoms | 2 / 2 | 4 | Faster, more signals |
+| Very strict | 3 / 3 | 5 + Require Divergence ON | Highest quality filter |
 
-- **Intraday indices (NIFTY / BANKNIFTY):** HTF = `60`, Min Score = `4` or `5`, Rel Vol ≥ `1.4`
-- **Swing stocks:** HTF = `D`, chart TF = `1H` or `4H`, Min Score = `4`
-- Turn **Show Weak / Watch Signals** on if you want early triangles before full confluence
+## Limits
 
-## Alerts
-
-Three alert conditions are built in:
-
-- Institutional BUY
-- Institutional SELL
-- Any Institutional Signal
-
-Create the alert from the chart → Alerts → Condition = this indicator.
-
-## Important limits
-
-- Uses **public chart data only** (price + volume). It does **not** read broker order flow, dark pools, or exchange OI.
-- For strike-level CE/PE OI charts (like your earlier request), TradingView data is often incomplete — this indicator is for price-action confluence, not option-chain OI.
-- Always combine with risk management; past confluence does not guarantee future results.
+- Exact tops/bottoms cannot be known in advance; this confirms turns after `Pivot Right` bars (default 3).
+- Zones and bias use price/volume/VWAP only — not broker order flow or option OI.
+- Always use stops (e.g. beyond zone / last swing) and position sizing.

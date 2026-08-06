@@ -1,318 +1,448 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// © Institutional Confluence Engine — educational use only. Not financial advice.
+// Educational use only. Not financial advice. No indicator catches exact tops/bottoms every time.
 //@version=5
-indicator("Institutional Buy/Sell Confluence", shorttitle="IBSC", overlay=true, max_labels_count=500, max_boxes_count=100, max_lines_count=50)
+indicator("Institutional Buy/Sell System", shorttitle="IBSS", overlay=true, max_labels_count=500, max_boxes_count=200, max_lines_count=100)
 
 //══════════════════════════════════════════════════════════════════════════════
 // INPUTS
 //══════════════════════════════════════════════════════════════════════════════
-grpStruct = "Market Structure"
-swingLen     = input.int(5, "Swing Lookback", minval=2, maxval=20, group=grpStruct)
-useCHoCH     = input.bool(true, "Require CHoCH / BOS Alignment", group=grpStruct)
+grpCore = "Core Signal Engine"
+pivotLeft     = input.int(3, "Pivot Left Bars", minval=1, maxval=10, group=grpCore, tooltip="Higher = fewer but more confirmed turns")
+pivotRight    = input.int(3, "Pivot Right Bars", minval=1, maxval=10, group=grpCore, tooltip="Confirmation delay. 2–3 is a good balance.")
+minPivotAtr   = input.float(0.35, "Min Swing Size (ATR)", minval=0.1, step=0.05, group=grpCore)
+rsiLen        = input.int(14, "RSI Length", minval=5, group=grpCore)
+rsiOb         = input.int(68, "RSI Overbought", minval=55, maxval=90, group=grpCore)
+rsiOs         = input.int(32, "RSI Oversold", minval=10, maxval=45, group=grpCore)
+stochLen      = input.int(14, "Stochastic Length", group=grpCore)
+stochSmooth   = input.int(3, "Stochastic Smooth", group=grpCore)
+requireDiv    = input.bool(false, "Require RSI Divergence (stricter)", group=grpCore)
+requireRej    = input.bool(true, "Require Rejection Candle at Extreme", group=grpCore)
+minScore      = input.int(4, "Min Reversal Score (0–7)", minval=3, maxval=7, group=grpCore)
+cooldownBars  = input.int(5, "Min Bars Between Opposite Signals", minval=1, group=grpCore)
 
-grpHTF = "Higher Timeframe Bias"
-htfTf        = input.timeframe("60", "HTF Timeframe", group=grpHTF)
-useHtfFilter = input.bool(true, "Require HTF Bias Alignment", group=grpHTF)
-htfEmaLen    = input.int(50, "HTF EMA Length", minval=10, group=grpHTF)
+grpZone = "Intraday Dynamic Zones"
+sessionOpenMin = input.int(30, "Opening Range Minutes", minval=5, maxval=120, group=grpZone, tooltip="First N minutes of the session form the opening range")
+vwapBandMult   = input.float(1.0, "VWAP Band σ Multiplier", minval=0.5, step=0.1, group=grpZone)
+zonePadAtr     = input.float(0.15, "Zone Padding (ATR)", minval=0.0, step=0.05, group=grpZone)
+showZones      = input.bool(true, "Show Buy / Sell Zones", group=grpZone)
+showVwap       = input.bool(true, "Show Session VWAP", group=grpZone)
+showOr         = input.bool(true, "Show Opening Range", group=grpZone)
 
-grpVol = "Volume / Participation"
-volMaLen     = input.int(20, "Volume MA Length", minval=5, group=grpVol)
-volMult      = input.float(1.4, "Min Relative Volume", minval=1.0, step=0.1, group=grpVol)
-useVolFilter = input.bool(true, "Require Volume Confirmation", group=grpVol)
-
-grpOb = "Order Block / Displacement"
-dispAtrMult  = input.float(1.2, "Displacement ATR Multiple", minval=0.5, step=0.1, group=grpOb)
-atrLen       = input.int(14, "ATR Length", minval=5, group=grpOb)
-showOB       = input.bool(true, "Show Order Blocks", group=grpOb)
-obMaxAge     = input.int(50, "Max OB Age (bars)", minval=10, maxval=200, group=grpOb)
-
-grpLiq = "Liquidity Sweep"
-useSweep     = input.bool(true, "Prefer Liquidity Sweep Entries", group=grpLiq)
-sweepLookback = input.int(20, "Sweep Lookback", minval=5, group=grpLiq)
-
-grpSig = "Signal Quality"
-minScore     = input.int(4, "Minimum Confluence Score (0-6)", minval=2, maxval=6, group=grpSig)
-cooldownBars = input.int(8, "Signal Cooldown (bars)", minval=1, group=grpSig)
-showWeak     = input.bool(false, "Show Weak / Watch Signals", group=grpSig)
+grpBias = "Bias Engine"
+emaFastLen = input.int(9, "Fast EMA", group=grpBias)
+emaMidLen  = input.int(21, "Mid EMA", group=grpBias)
+emaSlowLen = input.int(50, "Slow EMA", group=grpBias)
+adxLen     = input.int(14, "ADX Length", group=grpBias)
+adxStrong  = input.float(25, "ADX Strong Trend", group=grpBias)
+adxExtreme = input.float(35, "ADX Extreme Trend", group=grpBias)
 
 grpVis = "Visuals"
 showDashboard = input.bool(true, "Show Dashboard", group=grpVis)
-showStructure = input.bool(true, "Show Structure Lines", group=grpVis)
-bullColor     = input.color(color.new(#089981, 0), "Buy Color", group=grpVis)
-bearColor     = input.color(color.new(#F23645, 0), "Sell Color", group=grpVis)
-obBullColor   = input.color(color.new(#089981, 78), "Bull OB Fill", group=grpVis)
-obBearColor   = input.color(color.new(#F23645, 78), "Bear OB Fill", group=grpVis)
+bullColor     = input.color(#089981, "Buy Color", group=grpVis)
+bearColor     = input.color(#F23645, "Sell Color", group=grpVis)
+buyZoneColor  = input.color(color.new(#089981, 82), "Buy Zone Fill", group=grpVis)
+sellZoneColor = input.color(color.new(#F23645, 82), "Sell Zone Fill", group=grpVis)
+neutralZone   = input.color(color.new(#787B86, 88), "Balance Zone Fill", group=grpVis)
 
 //══════════════════════════════════════════════════════════════════════════════
-// HELPERS
+// SESSION / DAY CONTEXT
 //══════════════════════════════════════════════════════════════════════════════
-atr = ta.atr(atrLen)
-volMa = ta.sma(volume, volMaLen)
-relVol = volMa > 0 ? volume / volMa : 0.0
-dispUp = close > open and (close - open) >= atr * dispAtrMult
-dispDn = close < open and (open - close) >= atr * dispAtrMult
+newDay = ta.change(time("D")) != 0
+
+var float dayOpen = na
+var float dayHigh = na
+var float dayLow  = na
+var int   dayStartBar = na
+var float orHigh = na
+var float orLow  = na
+var bool  orDone = false
+
+if newDay
+    dayOpen := open
+    dayHigh := high
+    dayLow := low
+    dayStartBar := bar_index
+    orHigh := high
+    orLow := low
+    orDone := false
+else
+    dayHigh := math.max(nz(dayHigh, high), high)
+    dayLow := math.min(nz(dayLow, low), low)
+
+barsFromOpen = bar_index - nz(dayStartBar, bar_index)
+// Opening-range bar count from chart TF (minutes-based intraday)
+minsPerBar = timeframe.isseconds ? timeframe.multiplier / 60.0 : timeframe.isminutes ? float(timeframe.multiplier) : timeframe.isintraday ? float(timeframe.multiplier) : 60.0
+orBarsNeeded = math.max(1, int(math.round(sessionOpenMin / math.max(minsPerBar, 0.25))))
+
+if not orDone
+    orHigh := math.max(nz(orHigh, high), high)
+    orLow := math.min(nz(orLow, low), low)
+    if barsFromOpen + 1 >= orBarsNeeded
+        orDone := true
+
+// Session VWAP + st.dev bands (resets daily)
+var float vwapSumSrcVol = 0.0
+var float vwapSumVol = 0.0
+var float vwapSumSrc2Vol = 0.0
+if newDay
+    vwapSumSrcVol := hlc3 * volume
+    vwapSumVol := volume
+    vwapSumSrc2Vol := hlc3 * hlc3 * volume
+else
+    vwapSumSrcVol += hlc3 * volume
+    vwapSumVol += volume
+    vwapSumSrc2Vol += hlc3 * hlc3 * volume
+
+sessVwap = vwapSumVol > 0 ? vwapSumSrcVol / vwapSumVol : hlc3
+variance = vwapSumVol > 0 ? math.max(vwapSumSrc2Vol / vwapSumVol - sessVwap * sessVwap, 0.0) : 0.0
+vwapDev = math.sqrt(variance)
+vwapUpper = sessVwap + vwapDev * vwapBandMult
+vwapLower = sessVwap - vwapDev * vwapBandMult
+
+atr = ta.atr(14)
+pad = atr * zonePadAtr
 
 //══════════════════════════════════════════════════════════════════════════════
-// SWING STRUCTURE
+// DYNAMIC INTRADAY BUY / SELL ZONES
+// Buy zone  = lower value area (OR low ∩ VWAP lower ∩ day low area)
+// Sell zone = upper value area (OR high ∩ VWAP upper ∩ day high area)
+// Zones update as the day develops.
 //══════════════════════════════════════════════════════════════════════════════
-ph = ta.pivothigh(high, swingLen, swingLen)
-pl = ta.pivotlow(low, swingLen, swingLen)
+// Dynamic zones: always buy below VWAP, sell above VWAP; widen with day extremes
+buyRawTop = math.min(sessVwap - atr * 0.15, math.min(nz(orLow, low), vwapLower)) + pad
+buyRawBot = math.min(nz(dayLow, low), buyRawTop) - pad
+buyZoneTop = math.max(buyRawTop, buyRawBot)
+buyZoneBot = math.min(buyRawTop, buyRawBot)
 
-var float lastPH = na
-var float lastPL = na
-var float prevPH = na
-var float prevPL = na
-var int   lastPHbar = na
-var int   lastPLbar = na
+sellRawBot = math.max(sessVwap + atr * 0.15, math.max(nz(orHigh, high), vwapUpper)) - pad
+sellRawTop = math.max(nz(dayHigh, high), sellRawBot) + pad
+sellZoneTop = math.max(sellRawTop, sellRawBot)
+sellZoneBot = math.min(sellRawTop, sellRawBot)
+
+// Mid balance band around VWAP
+balTop = sessVwap + atr * 0.25
+balBot = sessVwap - atr * 0.25
+
+inBuyZone  = low <= buyZoneTop and high >= buyZoneBot
+inSellZone = high >= sellZoneBot and low <= sellZoneTop
+
+var box buyBox = na
+var box sellBox = na
+var box balBox = na
+
+if showZones and barstate.islast
+    if not na(buyBox)
+        box.delete(buyBox)
+    if not na(sellBox)
+        box.delete(sellBox)
+    if not na(balBox)
+        box.delete(balBox)
+    left = nz(dayStartBar, bar_index - 50)
+    buyBox := box.new(left, buyZoneTop, bar_index + 8, buyZoneBot, border_color=bullColor, bgcolor=buyZoneColor, border_width=1, text="BUY ZONE", text_color=bullColor, text_size=size.tiny, text_halign=text.align_right, text_valign=text.align_center)
+    sellBox := box.new(left, sellZoneTop, bar_index + 8, sellZoneBot, border_color=bearColor, bgcolor=sellZoneColor, border_width=1, text="SELL ZONE", text_color=bearColor, text_size=size.tiny, text_halign=text.align_right, text_valign=text.align_center)
+    balBox := box.new(left, balTop, bar_index + 8, balBot, border_color=color.new(#787B86, 50), bgcolor=neutralZone, border_width=1)
+
+plot(showVwap ? sessVwap : na, "Session VWAP", color=color.new(#FF9800, 0), linewidth=2)
+plot(showOr and orDone ? orHigh : na, "OR High", color=color.new(bearColor, 40), style=plot.style_linebr, linewidth=1)
+plot(showOr and orDone ? orLow : na, "OR Low", color=color.new(bullColor, 40), style=plot.style_linebr, linewidth=1)
+
+//══════════════════════════════════════════════════════════════════════════════
+// TREND / BIAS (chart timeframe)
+//══════════════════════════════════════════════════════════════════════════════
+emaF = ta.ema(close, emaFastLen)
+emaM = ta.ema(close, emaMidLen)
+emaS = ta.ema(close, emaSlowLen)
+[diPlus, diMinus, adx] = ta.dmi(adxLen, adxLen)
+
+bullStack = emaF > emaM and emaM > emaS
+bearStack = emaF < emaM and emaM < emaS
+priceVsEma = close > emaS ? 1 : close < emaS ? -1 : 0
+diBull = diPlus > diMinus
+diBear = diMinus > diPlus
+
+// Bias score -3..+3 then map to labels
+biasScore = 0
+biasScore += bullStack ? 1 : bearStack ? -1 : 0
+biasScore += priceVsEma
+biasScore += diBull ? 1 : diBear ? -1 : 0
+// Stretch from VWAP adds conviction
+biasScore += close > vwapUpper ? 1 : close < vwapLower ? -1 : 0
+// Clamp
+biasScore := math.max(-4, math.min(4, biasScore))
+
+biasLabel = biasScore >= 3 and adx >= adxExtreme ? "EXTREMELY BULLISH" : biasScore >= 2 or (biasScore >= 1 and adx >= adxStrong and diBull) ? "BULLISH" : biasScore <= -3 and adx >= adxExtreme ? "EXTREMELY BEARISH" : biasScore <= -2 or (biasScore <= -1 and adx >= adxStrong and diBear) ? "BEARISH" : "NEUTRAL"
+
+biasColor = biasLabel == "EXTREMELY BULLISH" ? #00C853 : biasLabel == "BULLISH" ? bullColor : biasLabel == "EXTREMELY BEARISH" ? #D50000 : biasLabel == "BEARISH" ? bearColor : #FFB300
+
+plot(emaF, "EMA Fast", color=color.new(bullColor, 65))
+plot(emaM, "EMA Mid", color=color.new(#787B86, 50))
+plot(emaS, "EMA Slow", color=color.new(bearColor, 65))
+
+//══════════════════════════════════════════════════════════════════════════════
+// OSCILLATORS / DIVERGENCE / REJECTION
+//══════════════════════════════════════════════════════════════════════════════
+rsi = ta.rsi(close, rsiLen)
+k = ta.stoch(close, high, low, stochLen)
+d = ta.sma(k, stochSmooth)
+volMa = ta.sma(volume, 20)
+relVol = volMa > 0 ? volume / volMa : 1.0
+
+// Pivot points for divergence & confirmed turns
+ph = ta.pivothigh(high, pivotLeft, pivotRight)
+pl = ta.pivotlow(low, pivotLeft, pivotRight)
+
+var float lastPhPrice = na
+var float lastPhRsi = na
+var float lastPlPrice = na
+var float lastPlRsi = na
+var float prevPhPrice = na
+var float prevPhRsi = na
+var float prevPlPrice = na
+var float prevPlRsi = na
+
+bearDiv = false
+bullDiv = false
 
 if not na(ph)
-    prevPH := lastPH
-    lastPH := ph
-    lastPHbar := bar_index - swingLen
+    prevPhPrice := lastPhPrice
+    prevPhRsi := lastPhRsi
+    lastPhPrice := ph
+    lastPhRsi := rsi[pivotRight]
+    if not na(prevPhPrice) and not na(prevPhRsi)
+        // Higher high in price, lower high in RSI
+        bearDiv := lastPhPrice > prevPhPrice and lastPhRsi < prevPhRsi
+
 if not na(pl)
-    prevPL := lastPL
-    lastPL := pl
-    lastPLbar := bar_index - swingLen
+    prevPlPrice := lastPlPrice
+    prevPlRsi := lastPlRsi
+    lastPlPrice := pl
+    lastPlRsi := rsi[pivotRight]
+    if not na(prevPlPrice) and not na(prevPlRsi)
+        // Lower low in price, higher low in RSI
+        bullDiv := lastPlPrice < prevPlPrice and lastPlRsi > prevPlRsi
 
-// Structure bias: +1 bullish HH/HL, -1 bearish LH/LL
-structBias = 0
-if not na(lastPH) and not na(prevPH) and not na(lastPL) and not na(prevPL)
-    if lastPH > prevPH and lastPL > prevPL
-        structBias := 1
-    else if lastPH < prevPH and lastPL < prevPL
-        structBias := -1
+// Rejection candles
+upperWick = high - math.max(open, close)
+lowerWick = math.min(open, close) - low
+body = math.abs(close - open)
+range_ = high - low
+bullReject = range_ > 0 and lowerWick >= range_ * 0.55 and body <= range_ * 0.35 and close >= open
+bearReject = range_ > 0 and upperWick >= range_ * 0.55 and body <= range_ * 0.35 and close <= open
 
-// Break of structure / Change of character
-bosBull = not na(lastPH) and ta.crossover(close, lastPH)
-bosBear = not na(lastPL) and ta.crossunder(close, lastPL)
+// Volume climax (exhaustion)
+volClimax = relVol >= 1.8
 
-var int trendState = 0  // 1 bull, -1 bear
-if bosBull
-    trendState := 1
-if bosBear
-    trendState := -1
-
-chochBull = trendState == -1 and bosBull
-chochBear = trendState == 1 and bosBear
-
-var line phLine = na
-var line plLine = na
-if showStructure and not na(lastPH) and not na(lastPHbar)
-    if na(phLine)
-        phLine := line.new(lastPHbar, lastPH, bar_index, lastPH, color=color.new(bearColor, 50), style=line.style_dotted, width=1)
-    else
-        line.set_xy1(phLine, lastPHbar, lastPH)
-        line.set_xy2(phLine, bar_index, lastPH)
-if showStructure and not na(lastPL) and not na(lastPLbar)
-    if na(plLine)
-        plLine := line.new(lastPLbar, lastPL, bar_index, lastPL, color=color.new(bullColor, 50), style=line.style_dotted, width=1)
-    else
-        line.set_xy1(plLine, lastPLbar, lastPL)
-        line.set_xy2(plLine, bar_index, lastPL)
+// Extension fade: stretched from VWAP
+stretchedUp = close >= vwapUpper
+stretchedDn = close <= vwapLower
 
 //══════════════════════════════════════════════════════════════════════════════
-// HTF BIAS
+// REVERSAL SCORE AT CANDIDATE TOPS / BOTTOMS
+// Uses confirmed pivots (lag = pivotRight) for accuracy over earliness.
 //══════════════════════════════════════════════════════════════════════════════
-htfClose = request.security(syminfo.tickerid, htfTf, close, barmerge.gaps_off, barmerge.lookahead_off)
-htfEma   = request.security(syminfo.tickerid, htfTf, ta.ema(close, htfEmaLen), barmerge.gaps_off, barmerge.lookahead_off)
-htfBias  = htfClose > htfEma ? 1 : htfClose < htfEma ? -1 : 0
+pivotBarOffset = pivotRight  // kept for clarity; signals offset by this when pivot-confirmed
 
-//══════════════════════════════════════════════════════════════════════════════
-// ORDER BLOCKS (last opposite candle before displacement)
-//══════════════════════════════════════════════════════════════════════════════
-var float bullObTop = na
-var float bullObBot = na
-var int   bullObBar = na
-var float bearObTop = na
-var float bearObBot = na
-var int   bearObBar = na
-var box   bullObBox = na
-var box   bearObBox = na
+// Is this bar the confirmed pivot bar (right bars have printed)?
+isPivotLowBar = not na(pl)
+isPivotHighBar = not na(ph)
 
-// Capture OB on displacement
-if dispUp and close[1] < open[1]
-    bullObTop := high[1]
-    bullObBot := low[1]
-    bullObBar := bar_index - 1
-    if showOB
-        if not na(bullObBox)
-            box.delete(bullObBox)
-        bullObBox := box.new(bullObBar, bullObTop, bar_index, bullObBot, border_color=bullColor, bgcolor=obBullColor, border_width=1)
+// Swing magnitude filter vs prior opposite pivot
+swingOkLow = true
+swingOkHigh = true
+if isPivotLowBar and not na(lastPhPrice)
+    swingOkLow := (lastPhPrice - pl) >= atr * minPivotAtr
+if isPivotHighBar and not na(lastPlPrice)
+    swingOkHigh := (ph - lastPlPrice) >= atr * minPivotAtr
 
-if dispDn and close[1] > open[1]
-    bearObTop := high[1]
-    bearObBot := low[1]
-    bearObBar := bar_index - 1
-    if showOB
-        if not na(bearObBox)
-            box.delete(bearObBox)
-        bearObBox := box.new(bearObBar, bearObTop, bar_index, bearObBot, border_color=bearColor, bgcolor=obBearColor, border_width=1)
+// Score at pivot confirmation bar (evaluate conditions as of the pivot candle)
+rsiAtPivot = rsi[pivotRight]
+kAtPivot = k[pivotRight]
+inBuyAtPivot = low[pivotRight] <= buyZoneTop[pivotRight] and high[pivotRight] >= buyZoneBot[pivotRight]
+inSellAtPivot = high[pivotRight] >= sellZoneBot[pivotRight] and low[pivotRight] <= sellZoneTop[pivotRight]
+pRange = high[pivotRight] - low[pivotRight]
+pUpperWick = high[pivotRight] - math.max(open[pivotRight], close[pivotRight])
+pLowerWick = math.min(open[pivotRight], close[pivotRight]) - low[pivotRight]
+pBody = math.abs(close[pivotRight] - open[pivotRight])
+bullRejectAtPivot = pRange > 0 and pLowerWick >= pRange * 0.5 and pBody <= pRange * 0.4
+bearRejectAtPivot = pRange > 0 and pUpperWick >= pRange * 0.5 and pBody <= pRange * 0.4
+volClimaxAtPivot = volume[pivotRight] >= volMa[pivotRight] * 1.6
+stretchedDnAtPivot = close[pivotRight] <= vwapLower[pivotRight]
+stretchedUpAtPivot = close[pivotRight] >= vwapUpper[pivotRight]
+stochOsAtPivot = kAtPivot <= 25
+stochObAtPivot = kAtPivot >= 75
+rsiOsAtPivot = rsiAtPivot <= rsiOs
+rsiObAtPivot = rsiAtPivot >= rsiOb
 
-// Extend / invalidate OBs
-bullObValid = not na(bullObBar) and (bar_index - bullObBar) <= obMaxAge and low > bullObBot
-bearObValid = not na(bearObBar) and (bar_index - bearObBar) <= obMaxAge and high < bearObTop
+bottomScore = 0
+topScore = 0
 
-if showOB and not na(bullObBox) and bullObValid
-    box.set_right(bullObBox, bar_index)
-if showOB and not na(bearObBox) and bearObValid
-    box.set_right(bearObBox, bar_index)
+if isPivotLowBar
+    bottomScore += 1  // confirmed swing low
+    bottomScore += inBuyAtPivot ? 1 : 0
+    bottomScore += rsiOsAtPivot ? 1 : 0
+    bottomScore += stochOsAtPivot ? 1 : 0
+    bottomScore += bullRejectAtPivot ? 1 : 0
+    bottomScore += (bullDiv or stretchedDnAtPivot) ? 1 : 0
+    bottomScore += (volClimaxAtPivot or biasScore >= 0) ? 1 : 0
 
-if not bullObValid and not na(bullObBox)
-    box.delete(bullObBox)
-    bullObBox := na
-    bullObTop := na
-    bullObBot := na
-    bullObBar := na
+if isPivotHighBar
+    topScore += 1  // confirmed swing high
+    topScore += inSellAtPivot ? 1 : 0
+    topScore += rsiObAtPivot ? 1 : 0
+    topScore += stochObAtPivot ? 1 : 0
+    topScore += bearRejectAtPivot ? 1 : 0
+    topScore += (bearDiv or stretchedUpAtPivot) ? 1 : 0
+    topScore += (volClimaxAtPivot or biasScore <= 0) ? 1 : 0
 
-if not bearObValid and not na(bearObBox)
-    box.delete(bearObBox)
-    bearObBox := na
-    bearObTop := na
-    bearObBot := na
-    bearObBar := na
-
-inBullOb = bullObValid and low <= bullObTop and low >= bullObBot
-inBearOb = bearObValid and high >= bearObBot and high <= bearObTop
+bottomPass = isPivotLowBar and swingOkLow and bottomScore >= minScore and (not requireDiv or bullDiv) and (not requireRej or bullRejectAtPivot)
+topPass = isPivotHighBar and swingOkHigh and topScore >= minScore and (not requireDiv or bearDiv) and (not requireRej or bearRejectAtPivot)
 
 //══════════════════════════════════════════════════════════════════════════════
-// LIQUIDITY SWEEP
+// ALTERNATING STATE MACHINE: BUY → SELL → BUY → …
+// Also supports early zone-rejection flips when already in a position-state.
 //══════════════════════════════════════════════════════════════════════════════
-swingHigh = ta.highest(high, sweepLookback)[1]
-swingLow  = ta.lowest(low, sweepLookback)[1]
-bullSweep = low < swingLow and close > swingLow and close > open
-bearSweep = high > swingHigh and close < swingHigh and close < open
-
-//══════════════════════════════════════════════════════════════════════════════
-// MOMENTUM / EMA STACK (institutional trend filter proxy)
-//══════════════════════════════════════════════════════════════════════════════
-emaFast = ta.ema(close, 8)
-emaMid  = ta.ema(close, 21)
-emaSlow = ta.ema(close, 50)
-bullStack = emaFast > emaMid and emaMid > emaSlow
-bearStack = emaFast < emaMid and emaMid < emaSlow
-
-plot(emaFast, "EMA 8", color=color.new(bullColor, 60), linewidth=1)
-plot(emaMid,  "EMA 21", color=color.new(#787B86, 40), linewidth=1)
-plot(emaSlow, "EMA 50", color=color.new(bearColor, 60), linewidth=1)
-
-rsi = ta.rsi(close, 14)
-bullMom = rsi > 45 and rsi < 75
-bearMom = rsi < 55 and rsi > 25
-
-//══════════════════════════════════════════════════════════════════════════════
-// CONFLUENCE SCORE (max 6)
-//══════════════════════════════════════════════════════════════════════════════
-bullScore = 0
-bearScore = 0
-
-// 1) Structure / BOS-CHoCH
-bullStruct = trendState == 1 or chochBull or bosBull or structBias == 1
-bearStruct = trendState == -1 or chochBear or bosBear or structBias == -1
-if bullStruct
-    bullScore += 1
-if bearStruct
-    bearScore += 1
-
-// 2) HTF bias
-if htfBias == 1
-    bullScore += 1
-if htfBias == -1
-    bearScore += 1
-
-// 3) Volume participation
-if relVol >= volMult and close > open
-    bullScore += 1
-if relVol >= volMult and close < open
-    bearScore += 1
-
-// 4) Order block retest
-if inBullOb
-    bullScore += 1
-if inBearOb
-    bearScore += 1
-
-// 5) Liquidity sweep
-if bullSweep
-    bullScore += 1
-if bearSweep
-    bearScore += 1
-
-// 6) EMA stack + momentum
-if bullStack and bullMom
-    bullScore += 1
-if bearStack and bearMom
-    bearScore += 1
-
-// Optional hard filters
-htfOkBull = not useHtfFilter or htfBias == 1
-htfOkBear = not useHtfFilter or htfBias == -1
-volOk     = not useVolFilter or relVol >= volMult
-structOkBull = not useCHoCH or bullStruct
-structOkBear = not useCHoCH or bearStruct
-sweepPrefBull = not useSweep or bullSweep or inBullOb
-sweepPrefBear = not useSweep or bearSweep or inBearOb
-
-buyEligible  = htfOkBull and volOk and structOkBull and sweepPrefBull and bullScore >= minScore and bullScore > bearScore
-sellEligible = htfOkBear and volOk and structOkBear and sweepPrefBear and bearScore >= minScore and bearScore > bullScore
-
+var int lastSide = 0          // 1 = last was BUY, -1 = last was SELL, 0 = flat
 var int lastSigBar = na
+var float lastSigPrice = na
+var float lastBuyPrice = na
+var float lastSellPrice = na
+
 cooled = na(lastSigBar) or (bar_index - lastSigBar) >= cooldownBars
 
-buySignal  = buyEligible and cooled and close > open
-sellSignal = sellEligible and cooled and close < open
+// Prefer zone + oscillator flips between confirmed pivots for tighter tops/bottoms
+// Early entry (no pivot wait) only if very strong and alternate side required
+earlyBuyScore = 0
+earlyBuyScore += inBuyZone ? 2 : 0
+earlyBuyScore += rsi <= rsiOs ? 1 : 0
+earlyBuyScore += k <= 20 ? 1 : 0
+earlyBuyScore += bullReject ? 1 : 0
+earlyBuyScore += stretchedDn ? 1 : 0
+earlyBuyScore += (bullStack or biasScore >= 1) ? 1 : 0
+earlyBuyScore += volClimax and close > open ? 1 : 0
 
-if buySignal or sellSignal
+earlySellScore = 0
+earlySellScore += inSellZone ? 2 : 0
+earlySellScore += rsi >= rsiOb ? 1 : 0
+earlySellScore += k >= 80 ? 1 : 0
+earlySellScore += bearReject ? 1 : 0
+earlySellScore += stretchedUp ? 1 : 0
+earlySellScore += (bearStack or biasScore <= -1) ? 1 : 0
+earlySellScore += volClimax and close < open ? 1 : 0
+
+earlyBuy = earlyBuyScore >= minScore + 1 and close > open
+earlySell = earlySellScore >= minScore + 1 and close < open
+
+// Alternation rules — first signal (flat) must occur in the matching zone
+canBuy  = (lastSide == -1 or (lastSide == 0 and (inBuyZone or bottomPass))) and cooled
+canSell = (lastSide == 1 or (lastSide == 0 and (inSellZone or topPass))) and cooled
+
+// Confirmed pivot signals preferred; early only if alternate needed and extreme
+buySignal  = canBuy and (bottomPass or earlyBuy)
+sellSignal = canSell and (topPass or earlySell)
+
+// If both fire same bar (rare), prefer the one matching alternate need
+if buySignal and sellSignal
+    if lastSide == -1
+        sellSignal := false
+    else if lastSide == 1
+        buySignal := false
+    else
+        // flat: take higher score
+        if bottomScore + earlyBuyScore >= topScore + earlySellScore
+            sellSignal := false
+        else
+            buySignal := false
+
+if buySignal
+    lastSide := 1
     lastSigBar := bar_index
+    lastSigPrice := close
+    lastBuyPrice := close
+if sellSignal
+    lastSide := -1
+    lastSigBar := bar_index
+    lastSigPrice := close
+    lastSellPrice := close
 
-weakBuy  = showWeak and not buySignal and cooled and bullScore >= minScore - 1 and bullScore > bearScore and htfOkBull
-weakSell = showWeak and not sellSignal and cooled and bearScore >= minScore - 1 and bearScore > bullScore and htfOkBear
+// Reset side optionally on new day? Keep continuity across days for alternation.
+// User asked buy must follow sell and vice versa — keep across days.
 
 //══════════════════════════════════════════════════════════════════════════════
-// PLOTS / LABELS
+// PLOT SIGNALS AT PIVOT LOCATION WHEN CONFIRMED (more accurate tops/bottoms)
+// For pivot signals, mark the actual pivot bar; for early, mark current bar.
 //══════════════════════════════════════════════════════════════════════════════
-plotshape(buySignal,  title="BUY",  style=shape.labelup,   location=location.belowbar, color=bullColor, text="BUY",  textcolor=color.white, size=size.small)
-plotshape(sellSignal, title="SELL", style=shape.labeldown, location=location.abovebar, color=bearColor, text="SELL", textcolor=color.white, size=size.small)
-plotshape(weakBuy,  title="Watch Buy",  style=shape.triangleup,   location=location.belowbar, color=color.new(bullColor, 40), size=size.tiny)
-plotshape(weakSell, title="Watch Sell", style=shape.triangledown, location=location.abovebar, color=color.new(bearColor, 40), size=size.tiny)
+buyIsPivot = buySignal and bottomPass
+sellIsPivot = sellSignal and topPass
+
+if buySignal
+    label.new(buyIsPivot ? bar_index - pivotRight : bar_index, buyIsPivot ? low[pivotRight] : low, "BUY", style=label.style_label_up, color=bullColor, textcolor=color.white, size=size.small, yloc=yloc.price)
+if sellSignal
+    label.new(sellIsPivot ? bar_index - pivotRight : bar_index, sellIsPivot ? high[pivotRight] : high, "SELL", style=label.style_label_down, color=bearColor, textcolor=color.white, size=size.small, yloc=yloc.price)
+
+plotshape(buySignal and not buyIsPivot, title="Early BUY", style=shape.circle, location=location.belowbar, color=bullColor, size=size.tiny)
+plotshape(sellSignal and not sellIsPivot, title="Early SELL", style=shape.circle, location=location.abovebar, color=bearColor, size=size.tiny)
 
 bgcolor(buySignal ? color.new(bullColor, 90) : sellSignal ? color.new(bearColor, 90) : na)
 
+// Entry guidance lines from last signal
+var line entryLine = na
+if buySignal or sellSignal
+    if not na(entryLine)
+        line.set_x2(entryLine, bar_index)
+    entryLine := line.new(bar_index, close, bar_index + 1, close, color=buySignal ? bullColor : bearColor, style=line.style_dashed, width=2)
+if not na(entryLine)
+    line.set_x2(entryLine, bar_index)
+
 //══════════════════════════════════════════════════════════════════════════════
-// DASHBOARD
+// ACTION PLAN TEXT (where to buy / sell today)
 //══════════════════════════════════════════════════════════════════════════════
-var table dash = table.new(position.top_right, 2, 9, bgcolor=color.new(#131722, 10), border_width=1, border_color=color.new(#787B86, 60))
+actionText = lastSide == 1 ? "Looking for SELL in SELL ZONE" : lastSide == -1 ? "Looking for BUY in BUY ZONE" : "Wait for first extreme (BUY or SELL)"
+
+//══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD (top-right) — BIAS FIRST
+//══════════════════════════════════════════════════════════════════════════════
+var table dash = table.new(position.top_right, 2, 12, bgcolor=color.new(#0F1115, 5), border_width=1, border_color=color.new(#787B86, 55))
 
 if showDashboard and barstate.islast
-    table.cell(dash, 0, 0, "IBSC", text_color=color.white, text_size=size.small)
-    table.cell(dash, 1, 0, "Confluence", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 0, 0, "BIAS", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 0, biasLabel, text_color=biasColor, text_size=size.small)
 
-    table.cell(dash, 0, 1, "Bias LTF", text_color=color.gray, text_size=size.tiny)
-    table.cell(dash, 1, 1, trendState == 1 ? "BULL" : trendState == -1 ? "BEAR" : "RANGE", text_color=trendState == 1 ? bullColor : trendState == -1 ? bearColor : color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 1, "TF", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 1, timeframe.period, text_color=color.white, text_size=size.tiny)
 
-    table.cell(dash, 0, 2, "Bias HTF", text_color=color.gray, text_size=size.tiny)
-    table.cell(dash, 1, 2, htfBias == 1 ? "BULL" : htfBias == -1 ? "BEAR" : "FLAT", text_color=htfBias == 1 ? bullColor : htfBias == -1 ? bearColor : color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 2, "ADX", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 2, str.tostring(adx, "#.0"), text_color=adx >= adxStrong ? color.white : color.gray, text_size=size.tiny)
 
-    table.cell(dash, 0, 3, "Rel Vol", text_color=color.gray, text_size=size.tiny)
-    table.cell(dash, 1, 3, str.tostring(relVol, "#.00") + "x", text_color=relVol >= volMult ? color.white : color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 3, "Next", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 3, lastSide == 1 ? "SELL only" : lastSide == -1 ? "BUY only" : "BUY or SELL", text_color=lastSide == 1 ? bearColor : lastSide == -1 ? bullColor : color.orange, text_size=size.tiny)
 
-    table.cell(dash, 0, 4, "Buy Score", text_color=color.gray, text_size=size.tiny)
-    table.cell(dash, 1, 4, str.tostring(bullScore) + " / 6", text_color=bullScore >= minScore ? bullColor : color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 4, "Action", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 4, actionText, text_color=color.white, text_size=size.tiny)
 
-    table.cell(dash, 0, 5, "Sell Score", text_color=color.gray, text_size=size.tiny)
-    table.cell(dash, 1, 5, str.tostring(bearScore) + " / 6", text_color=bearScore >= minScore ? bearColor : color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 5, "Buy Zone", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 5, str.tostring(buyZoneBot, format.mintick) + " – " + str.tostring(buyZoneTop, format.mintick), text_color=bullColor, text_size=size.tiny)
 
-    table.cell(dash, 0, 6, "OB Zone", text_color=color.gray, text_size=size.tiny)
-    table.cell(dash, 1, 6, inBullOb ? "BULL OB" : inBearOb ? "BEAR OB" : "—", text_color=inBullOb ? bullColor : inBearOb ? bearColor : color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 6, "Sell Zone", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 6, str.tostring(sellZoneBot, format.mintick) + " – " + str.tostring(sellZoneTop, format.mintick), text_color=bearColor, text_size=size.tiny)
 
-    table.cell(dash, 0, 7, "Sweep", text_color=color.gray, text_size=size.tiny)
-    table.cell(dash, 1, 7, bullSweep ? "BUY SWEEP" : bearSweep ? "SELL SWEEP" : "—", text_color=bullSweep ? bullColor : bearSweep ? bearColor : color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 7, "VWAP", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 7, str.tostring(sessVwap, format.mintick), text_color=#FF9800, text_size=size.tiny)
 
-    table.cell(dash, 0, 8, "Signal", text_color=color.gray, text_size=size.tiny)
-    table.cell(dash, 1, 8, buySignal ? "BUY" : sellSignal ? "SELL" : "WAIT", text_color=buySignal ? bullColor : sellSignal ? bearColor : color.orange, text_size=size.small)
+    table.cell(dash, 0, 8, "In Zone", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 8, inBuyZone ? "BUY ZONE" : inSellZone ? "SELL ZONE" : "MID", text_color=inBuyZone ? bullColor : inSellZone ? bearColor : color.gray, text_size=size.tiny)
+
+    table.cell(dash, 0, 9, "Bot Score", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 9, str.tostring(math.max(bottomScore, earlyBuyScore)) + " / 7", text_color=color.white, text_size=size.tiny)
+
+    table.cell(dash, 0, 10, "Top Score", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 10, str.tostring(math.max(topScore, earlySellScore)) + " / 7", text_color=color.white, text_size=size.tiny)
+
+    table.cell(dash, 0, 11, "Last", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 11, lastSide == 1 ? "BUY @ " + str.tostring(lastBuyPrice, format.mintick) : lastSide == -1 ? "SELL @ " + str.tostring(lastSellPrice, format.mintick) : "—", text_color=lastSide == 1 ? bullColor : lastSide == -1 ? bearColor : color.gray, text_size=size.tiny)
 
 //══════════════════════════════════════════════════════════════════════════════
 // ALERTS
 //══════════════════════════════════════════════════════════════════════════════
-alertcondition(buySignal,  title="Institutional BUY",  message="IBSC BUY confluence met on {{ticker}} @ {{close}}")
-alertcondition(sellSignal, title="Institutional SELL", message="IBSC SELL confluence met on {{ticker}} @ {{close}}")
-alertcondition(buySignal or sellSignal, title="Any Institutional Signal", message="IBSC signal on {{ticker}} @ {{close}}")
+alertcondition(buySignal, title="BUY Signal", message="IBSS BUY on {{ticker}} @ {{close}} | Bias: check dashboard | Buy Zone active")
+alertcondition(sellSignal, title="SELL Signal", message="IBSS SELL on {{ticker}} @ {{close}} | Bias: check dashboard | Sell Zone active")
+alertcondition(buySignal or sellSignal, title="Any Signal", message="IBSS signal on {{ticker}} @ {{close}}")
