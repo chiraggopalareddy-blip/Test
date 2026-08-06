@@ -1,35 +1,48 @@
 # Institutional Algo Buy/Sell (TradingView)
 
-Non-repainting Pine Script v5 system: confirmed swing pivots only, strict BUY→SELL alternation, day projections, and trade plan tables.
+Non-repainting major-swing system with live/day bias, projections, top-notch zones, and a trade-idea panel.
 
 ## File
 
 [`indicators/InstitutionalBuySell.pine`](indicators/InstitutionalBuySell.pine)
 
-## Engine (why fewer fakes)
+## Top-right dashboard
 
-- **No early signals** — only `ta.pivothigh` / `ta.pivotlow` after `Pivot Right` bars close
-- **No repaint** — label is fixed on the swing bar once confirmed; it does not move later
-- **Alternation** — BUY must be followed by SELL (and reverse)
-- **Min swing + min reverse (ATR)** — ignores tiny noise pivots and mid-trend blips
-- **Location filter** — prefers day/OR/projection extremes (BUY ZONE / SELL ZONE)
-- **Trend gate** — in strong ADX trends, blocks weak counter-trend pivots unless exhaustion + rejection/divergence
-- **Score ≥ 70** required to print
+| Field | Meaning |
+|-------|---------|
+| Live Bias | Bullish / Extremely Bullish / Neutral / Chop / Bearish / Extremely Bearish |
+| Projected Day Bias | Session structure bias (OR break + VWAP + ADR travel) |
+| What to do? | Buy on dips / Sell on rips / fade range / wait |
+| Projected Day High/Low | ADR + Opening-Range expansion hybrid |
+| Day Range | Projected high − low |
 
-## Dashboards
+All table text uses the same small font size.
 
-**Top-right:** Bias · Projected Day Range · Projected Day High/Low · What to do?  
-**Bottom-right:** Trade (Long/Short) · Entry · Stop · Target 1 & 2 · Confidence · R:R
+## Bottom-right — Current Trade Idea
 
-Bias values: `Buy` | `Sell` | `Neutral` | `Chop` | `Extremely Bullish` | `Extremely Bearish`
+Trade · Entry · Stop · Target 1 · Target 2 · Confidence (`xx.x%`)  
+(R:R removed)
 
-## How to trade it
+## Zones
 
-1. Paste into Pine Editor → Add to chart (5m/15m on liquid symbols)
-2. Wait for a **BUY** or **SELL** label (appears a few bars after the true swing — by design)
-3. Use bottom-right **Entry / Stop / T1 / T2**
-4. Follow **What to do?** until flat, then wait for the opposite side
+Buy/Sell zones are narrow ATR-width liquidity bands from:
 
-## Important
+- Session VWAP ± 1σ
+- Opening Range high/low
+- Prior day high/low
 
-Confirmed tops/bottoms always need a few bars after the turn. That lag is what prevents fake mid-candle signals and repainting. If still too many signals, raise **Min Swing (ATR)** to `1.3` and **Pivot Left** to `7`.
+Snapped to session liquidity after the opening range locks — not full-chart slabs.
+
+## Signals
+
+- Confirmed pivots only (default Left 8 / Right 4) — **no repaint**
+- Min swing by ATR **and** ADR fraction → bigger moves only
+- Must touch Buy/Sell zone
+- Strict BUY → SELL alternation
+- Trend gate blocks weak counter-trend fakes
+- Score ≥ 80 to print
+
+## Use
+
+Paste into TradingView Pine Editor → Add to chart (5m/15m recommended).  
+Still too many signals? Raise **Pivot Left** to `10` and **Min Swing ATR** to `1.8`.
