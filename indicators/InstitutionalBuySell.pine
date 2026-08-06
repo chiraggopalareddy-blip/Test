@@ -240,7 +240,7 @@ stretchedDn = close <= vwapLower
 // REVERSAL SCORE AT CANDIDATE TOPS / BOTTOMS
 // Uses confirmed pivots (lag = pivotRight) for accuracy over earliness.
 //══════════════════════════════════════════════════════════════════════════════
-pivotBarOffset = pivotRight  // kept for clarity; signals offset by this when pivot-confirmed
+// Confirmation delay equals pivotRight bars for pivot-based tops/bottoms
 
 // Is this bar the confirmed pivot bar (right bars have printed)?
 isPivotLowBar = not na(pl)
