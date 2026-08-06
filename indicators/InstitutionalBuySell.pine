@@ -1,0 +1,318 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Institutional Confluence Engine — educational use only. Not financial advice.
+//@version=5
+indicator("Institutional Buy/Sell Confluence", shorttitle="IBSC", overlay=true, max_labels_count=500, max_boxes_count=100, max_lines_count=50)
+
+//══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+//══════════════════════════════════════════════════════════════════════════════
+grpStruct = "Market Structure"
+swingLen     = input.int(5, "Swing Lookback", minval=2, maxval=20, group=grpStruct)
+useCHoCH     = input.bool(true, "Require CHoCH / BOS Alignment", group=grpStruct)
+
+grpHTF = "Higher Timeframe Bias"
+htfTf        = input.timeframe("60", "HTF Timeframe", group=grpHTF)
+useHtfFilter = input.bool(true, "Require HTF Bias Alignment", group=grpHTF)
+htfEmaLen    = input.int(50, "HTF EMA Length", minval=10, group=grpHTF)
+
+grpVol = "Volume / Participation"
+volMaLen     = input.int(20, "Volume MA Length", minval=5, group=grpVol)
+volMult      = input.float(1.4, "Min Relative Volume", minval=1.0, step=0.1, group=grpVol)
+useVolFilter = input.bool(true, "Require Volume Confirmation", group=grpVol)
+
+grpOb = "Order Block / Displacement"
+dispAtrMult  = input.float(1.2, "Displacement ATR Multiple", minval=0.5, step=0.1, group=grpOb)
+atrLen       = input.int(14, "ATR Length", minval=5, group=grpOb)
+showOB       = input.bool(true, "Show Order Blocks", group=grpOb)
+obMaxAge     = input.int(50, "Max OB Age (bars)", minval=10, maxval=200, group=grpOb)
+
+grpLiq = "Liquidity Sweep"
+useSweep     = input.bool(true, "Prefer Liquidity Sweep Entries", group=grpLiq)
+sweepLookback = input.int(20, "Sweep Lookback", minval=5, group=grpLiq)
+
+grpSig = "Signal Quality"
+minScore     = input.int(4, "Minimum Confluence Score (0-6)", minval=2, maxval=6, group=grpSig)
+cooldownBars = input.int(8, "Signal Cooldown (bars)", minval=1, group=grpSig)
+showWeak     = input.bool(false, "Show Weak / Watch Signals", group=grpSig)
+
+grpVis = "Visuals"
+showDashboard = input.bool(true, "Show Dashboard", group=grpVis)
+showStructure = input.bool(true, "Show Structure Lines", group=grpVis)
+bullColor     = input.color(color.new(#089981, 0), "Buy Color", group=grpVis)
+bearColor     = input.color(color.new(#F23645, 0), "Sell Color", group=grpVis)
+obBullColor   = input.color(color.new(#089981, 78), "Bull OB Fill", group=grpVis)
+obBearColor   = input.color(color.new(#F23645, 78), "Bear OB Fill", group=grpVis)
+
+//══════════════════════════════════════════════════════════════════════════════
+// HELPERS
+//══════════════════════════════════════════════════════════════════════════════
+atr = ta.atr(atrLen)
+volMa = ta.sma(volume, volMaLen)
+relVol = volMa > 0 ? volume / volMa : 0.0
+dispUp = close > open and (close - open) >= atr * dispAtrMult
+dispDn = close < open and (open - close) >= atr * dispAtrMult
+
+//══════════════════════════════════════════════════════════════════════════════
+// SWING STRUCTURE
+//══════════════════════════════════════════════════════════════════════════════
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float lastPH = na
+var float lastPL = na
+var float prevPH = na
+var float prevPL = na
+var int   lastPHbar = na
+var int   lastPLbar = na
+
+if not na(ph)
+    prevPH := lastPH
+    lastPH := ph
+    lastPHbar := bar_index - swingLen
+if not na(pl)
+    prevPL := lastPL
+    lastPL := pl
+    lastPLbar := bar_index - swingLen
+
+// Structure bias: +1 bullish HH/HL, -1 bearish LH/LL
+structBias = 0
+if not na(lastPH) and not na(prevPH) and not na(lastPL) and not na(prevPL)
+    if lastPH > prevPH and lastPL > prevPL
+        structBias := 1
+    else if lastPH < prevPH and lastPL < prevPL
+        structBias := -1
+
+// Break of structure / Change of character
+bosBull = not na(lastPH) and ta.crossover(close, lastPH)
+bosBear = not na(lastPL) and ta.crossunder(close, lastPL)
+
+var int trendState = 0  // 1 bull, -1 bear
+if bosBull
+    trendState := 1
+if bosBear
+    trendState := -1
+
+chochBull = trendState == -1 and bosBull
+chochBear = trendState == 1 and bosBear
+
+var line phLine = na
+var line plLine = na
+if showStructure and not na(lastPH) and not na(lastPHbar)
+    if na(phLine)
+        phLine := line.new(lastPHbar, lastPH, bar_index, lastPH, color=color.new(bearColor, 50), style=line.style_dotted, width=1)
+    else
+        line.set_xy1(phLine, lastPHbar, lastPH)
+        line.set_xy2(phLine, bar_index, lastPH)
+if showStructure and not na(lastPL) and not na(lastPLbar)
+    if na(plLine)
+        plLine := line.new(lastPLbar, lastPL, bar_index, lastPL, color=color.new(bullColor, 50), style=line.style_dotted, width=1)
+    else
+        line.set_xy1(plLine, lastPLbar, lastPL)
+        line.set_xy2(plLine, bar_index, lastPL)
+
+//══════════════════════════════════════════════════════════════════════════════
+// HTF BIAS
+//══════════════════════════════════════════════════════════════════════════════
+htfClose = request.security(syminfo.tickerid, htfTf, close, barmerge.gaps_off, barmerge.lookahead_off)
+htfEma   = request.security(syminfo.tickerid, htfTf, ta.ema(close, htfEmaLen), barmerge.gaps_off, barmerge.lookahead_off)
+htfBias  = htfClose > htfEma ? 1 : htfClose < htfEma ? -1 : 0
+
+//══════════════════════════════════════════════════════════════════════════════
+// ORDER BLOCKS (last opposite candle before displacement)
+//══════════════════════════════════════════════════════════════════════════════
+var float bullObTop = na
+var float bullObBot = na
+var int   bullObBar = na
+var float bearObTop = na
+var float bearObBot = na
+var int   bearObBar = na
+var box   bullObBox = na
+var box   bearObBox = na
+
+// Capture OB on displacement
+if dispUp and close[1] < open[1]
+    bullObTop := high[1]
+    bullObBot := low[1]
+    bullObBar := bar_index - 1
+    if showOB
+        if not na(bullObBox)
+            box.delete(bullObBox)
+        bullObBox := box.new(bullObBar, bullObTop, bar_index, bullObBot, border_color=bullColor, bgcolor=obBullColor, border_width=1)
+
+if dispDn and close[1] > open[1]
+    bearObTop := high[1]
+    bearObBot := low[1]
+    bearObBar := bar_index - 1
+    if showOB
+        if not na(bearObBox)
+            box.delete(bearObBox)
+        bearObBox := box.new(bearObBar, bearObTop, bar_index, bearObBot, border_color=bearColor, bgcolor=obBearColor, border_width=1)
+
+// Extend / invalidate OBs
+bullObValid = not na(bullObBar) and (bar_index - bullObBar) <= obMaxAge and low > bullObBot
+bearObValid = not na(bearObBar) and (bar_index - bearObBar) <= obMaxAge and high < bearObTop
+
+if showOB and not na(bullObBox) and bullObValid
+    box.set_right(bullObBox, bar_index)
+if showOB and not na(bearObBox) and bearObValid
+    box.set_right(bearObBox, bar_index)
+
+if not bullObValid and not na(bullObBox)
+    box.delete(bullObBox)
+    bullObBox := na
+    bullObTop := na
+    bullObBot := na
+    bullObBar := na
+
+if not bearObValid and not na(bearObBox)
+    box.delete(bearObBox)
+    bearObBox := na
+    bearObTop := na
+    bearObBot := na
+    bearObBar := na
+
+inBullOb = bullObValid and low <= bullObTop and low >= bullObBot
+inBearOb = bearObValid and high >= bearObBot and high <= bearObTop
+
+//══════════════════════════════════════════════════════════════════════════════
+// LIQUIDITY SWEEP
+//══════════════════════════════════════════════════════════════════════════════
+swingHigh = ta.highest(high, sweepLookback)[1]
+swingLow  = ta.lowest(low, sweepLookback)[1]
+bullSweep = low < swingLow and close > swingLow and close > open
+bearSweep = high > swingHigh and close < swingHigh and close < open
+
+//══════════════════════════════════════════════════════════════════════════════
+// MOMENTUM / EMA STACK (institutional trend filter proxy)
+//══════════════════════════════════════════════════════════════════════════════
+emaFast = ta.ema(close, 8)
+emaMid  = ta.ema(close, 21)
+emaSlow = ta.ema(close, 50)
+bullStack = emaFast > emaMid and emaMid > emaSlow
+bearStack = emaFast < emaMid and emaMid < emaSlow
+
+plot(emaFast, "EMA 8", color=color.new(bullColor, 60), linewidth=1)
+plot(emaMid,  "EMA 21", color=color.new(#787B86, 40), linewidth=1)
+plot(emaSlow, "EMA 50", color=color.new(bearColor, 60), linewidth=1)
+
+rsi = ta.rsi(close, 14)
+bullMom = rsi > 45 and rsi < 75
+bearMom = rsi < 55 and rsi > 25
+
+//══════════════════════════════════════════════════════════════════════════════
+// CONFLUENCE SCORE (max 6)
+//══════════════════════════════════════════════════════════════════════════════
+bullScore = 0
+bearScore = 0
+
+// 1) Structure / BOS-CHoCH
+bullStruct = trendState == 1 or chochBull or bosBull or structBias == 1
+bearStruct = trendState == -1 or chochBear or bosBear or structBias == -1
+if bullStruct
+    bullScore += 1
+if bearStruct
+    bearScore += 1
+
+// 2) HTF bias
+if htfBias == 1
+    bullScore += 1
+if htfBias == -1
+    bearScore += 1
+
+// 3) Volume participation
+if relVol >= volMult and close > open
+    bullScore += 1
+if relVol >= volMult and close < open
+    bearScore += 1
+
+// 4) Order block retest
+if inBullOb
+    bullScore += 1
+if inBearOb
+    bearScore += 1
+
+// 5) Liquidity sweep
+if bullSweep
+    bullScore += 1
+if bearSweep
+    bearScore += 1
+
+// 6) EMA stack + momentum
+if bullStack and bullMom
+    bullScore += 1
+if bearStack and bearMom
+    bearScore += 1
+
+// Optional hard filters
+htfOkBull = not useHtfFilter or htfBias == 1
+htfOkBear = not useHtfFilter or htfBias == -1
+volOk     = not useVolFilter or relVol >= volMult
+structOkBull = not useCHoCH or bullStruct
+structOkBear = not useCHoCH or bearStruct
+sweepPrefBull = not useSweep or bullSweep or inBullOb
+sweepPrefBear = not useSweep or bearSweep or inBearOb
+
+buyEligible  = htfOkBull and volOk and structOkBull and sweepPrefBull and bullScore >= minScore and bullScore > bearScore
+sellEligible = htfOkBear and volOk and structOkBear and sweepPrefBear and bearScore >= minScore and bearScore > bullScore
+
+var int lastSigBar = na
+cooled = na(lastSigBar) or (bar_index - lastSigBar) >= cooldownBars
+
+buySignal  = buyEligible and cooled and close > open
+sellSignal = sellEligible and cooled and close < open
+
+if buySignal or sellSignal
+    lastSigBar := bar_index
+
+weakBuy  = showWeak and not buySignal and cooled and bullScore >= minScore - 1 and bullScore > bearScore and htfOkBull
+weakSell = showWeak and not sellSignal and cooled and bearScore >= minScore - 1 and bearScore > bullScore and htfOkBear
+
+//══════════════════════════════════════════════════════════════════════════════
+// PLOTS / LABELS
+//══════════════════════════════════════════════════════════════════════════════
+plotshape(buySignal,  title="BUY",  style=shape.labelup,   location=location.belowbar, color=bullColor, text="BUY",  textcolor=color.white, size=size.small)
+plotshape(sellSignal, title="SELL", style=shape.labeldown, location=location.abovebar, color=bearColor, text="SELL", textcolor=color.white, size=size.small)
+plotshape(weakBuy,  title="Watch Buy",  style=shape.triangleup,   location=location.belowbar, color=color.new(bullColor, 40), size=size.tiny)
+plotshape(weakSell, title="Watch Sell", style=shape.triangledown, location=location.abovebar, color=color.new(bearColor, 40), size=size.tiny)
+
+bgcolor(buySignal ? color.new(bullColor, 90) : sellSignal ? color.new(bearColor, 90) : na)
+
+//══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+//══════════════════════════════════════════════════════════════════════════════
+var table dash = table.new(position.top_right, 2, 9, bgcolor=color.new(#131722, 10), border_width=1, border_color=color.new(#787B86, 60))
+
+if showDashboard and barstate.islast
+    table.cell(dash, 0, 0, "IBSC", text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 0, "Confluence", text_color=color.gray, text_size=size.small)
+
+    table.cell(dash, 0, 1, "Bias LTF", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 1, trendState == 1 ? "BULL" : trendState == -1 ? "BEAR" : "RANGE", text_color=trendState == 1 ? bullColor : trendState == -1 ? bearColor : color.gray, text_size=size.tiny)
+
+    table.cell(dash, 0, 2, "Bias HTF", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 2, htfBias == 1 ? "BULL" : htfBias == -1 ? "BEAR" : "FLAT", text_color=htfBias == 1 ? bullColor : htfBias == -1 ? bearColor : color.gray, text_size=size.tiny)
+
+    table.cell(dash, 0, 3, "Rel Vol", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 3, str.tostring(relVol, "#.00") + "x", text_color=relVol >= volMult ? color.white : color.gray, text_size=size.tiny)
+
+    table.cell(dash, 0, 4, "Buy Score", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 4, str.tostring(bullScore) + " / 6", text_color=bullScore >= minScore ? bullColor : color.gray, text_size=size.tiny)
+
+    table.cell(dash, 0, 5, "Sell Score", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 5, str.tostring(bearScore) + " / 6", text_color=bearScore >= minScore ? bearColor : color.gray, text_size=size.tiny)
+
+    table.cell(dash, 0, 6, "OB Zone", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 6, inBullOb ? "BULL OB" : inBearOb ? "BEAR OB" : "—", text_color=inBullOb ? bullColor : inBearOb ? bearColor : color.gray, text_size=size.tiny)
+
+    table.cell(dash, 0, 7, "Sweep", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 7, bullSweep ? "BUY SWEEP" : bearSweep ? "SELL SWEEP" : "—", text_color=bullSweep ? bullColor : bearSweep ? bearColor : color.gray, text_size=size.tiny)
+
+    table.cell(dash, 0, 8, "Signal", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 1, 8, buySignal ? "BUY" : sellSignal ? "SELL" : "WAIT", text_color=buySignal ? bullColor : sellSignal ? bearColor : color.orange, text_size=size.small)
+
+//══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+//══════════════════════════════════════════════════════════════════════════════
+alertcondition(buySignal,  title="Institutional BUY",  message="IBSC BUY confluence met on {{ticker}} @ {{close}}")
+alertcondition(sellSignal, title="Institutional SELL", message="IBSC SELL confluence met on {{ticker}} @ {{close}}")
+alertcondition(buySignal or sellSignal, title="Any Institutional Signal", message="IBSC signal on {{ticker}} @ {{close}}")
