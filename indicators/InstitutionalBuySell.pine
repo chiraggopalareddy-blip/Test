@@ -895,7 +895,7 @@ lrCol   = lastRTrade == "Long" ? bullCol : lastRTrade == "Short" ? bearCol : col
 
 if showLastTables
     if na(lastTradesDash)
-        lastTradesDash := table.new(position.top_left, 2, 18, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#455A64, 50))
+        lastTradesDash := table.new(position.middle_left, 2, 17, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#455A64, 50))
     if barstate.islast
         // Last A+
         table.cell(lastTradesDash, 0, 0, "Last A+ Trade", text_color=color.white, text_size=FS, bgcolor=color.new(bullCol, 75))
@@ -915,29 +915,27 @@ if showLastTables
         table.cell(lastTradesDash, 0, 7, "Confidence", text_color=color.gray, text_size=FS)
         table.cell(lastTradesDash, 1, 7, laConf, text_color=color.orange, text_size=FS)
 
-        // Spacer rows for visual gap
-        table.cell(lastTradesDash, 0, 8, "", text_size=FS)
-        table.cell(lastTradesDash, 1, 8, "", text_size=FS)
-        table.cell(lastTradesDash, 0, 9, "", text_size=FS)
-        table.cell(lastTradesDash, 1, 9, "", text_size=FS)
+        // Spacer gap between sections
+        table.cell(lastTradesDash, 0, 8, " ", text_size=FS)
+        table.cell(lastTradesDash, 1, 8, " ", text_size=FS)
 
         // Last Risky
-        table.cell(lastTradesDash, 0, 10, "Last Risky Trade", text_color=color.white, text_size=FS, bgcolor=color.new(#FF6D00, 70))
-        table.cell(lastTradesDash, 1, 10, "", text_size=FS, bgcolor=color.new(#FF6D00, 70))
-        table.cell(lastTradesDash, 0, 11, "Triggered", text_color=color.gray, text_size=FS)
-        table.cell(lastTradesDash, 1, 11, lrWhen, text_color=color.white, text_size=FS)
-        table.cell(lastTradesDash, 0, 12, "Trade", text_color=color.gray, text_size=FS)
-        table.cell(lastTradesDash, 1, 12, lrTrade, text_color=lrCol, text_size=FS)
-        table.cell(lastTradesDash, 0, 13, "Entry", text_color=color.gray, text_size=FS)
-        table.cell(lastTradesDash, 1, 13, lrEntry, text_color=color.white, text_size=FS)
-        table.cell(lastTradesDash, 0, 14, "Stop", text_color=color.gray, text_size=FS)
-        table.cell(lastTradesDash, 1, 14, lrStop, text_color=bearCol, text_size=FS)
-        table.cell(lastTradesDash, 0, 15, "Target 1", text_color=color.gray, text_size=FS)
-        table.cell(lastTradesDash, 1, 15, lrT1, text_color=#FF6D00, text_size=FS)
-        table.cell(lastTradesDash, 0, 16, "Target 2", text_color=color.gray, text_size=FS)
-        table.cell(lastTradesDash, 1, 16, lrT2, text_color=#FF6D00, text_size=FS)
-        table.cell(lastTradesDash, 0, 17, "Confidence", text_color=color.gray, text_size=FS)
-        table.cell(lastTradesDash, 1, 17, lrConf, text_color=color.orange, text_size=FS)
+        table.cell(lastTradesDash, 0, 9, "Last Risky Trade", text_color=color.white, text_size=FS, bgcolor=color.new(#FF6D00, 70))
+        table.cell(lastTradesDash, 1, 9, "", text_size=FS, bgcolor=color.new(#FF6D00, 70))
+        table.cell(lastTradesDash, 0, 10, "Triggered", text_color=color.gray, text_size=FS)
+        table.cell(lastTradesDash, 1, 10, lrWhen, text_color=color.white, text_size=FS)
+        table.cell(lastTradesDash, 0, 11, "Trade", text_color=color.gray, text_size=FS)
+        table.cell(lastTradesDash, 1, 11, lrTrade, text_color=lrCol, text_size=FS)
+        table.cell(lastTradesDash, 0, 12, "Entry", text_color=color.gray, text_size=FS)
+        table.cell(lastTradesDash, 1, 12, lrEntry, text_color=color.white, text_size=FS)
+        table.cell(lastTradesDash, 0, 13, "Stop", text_color=color.gray, text_size=FS)
+        table.cell(lastTradesDash, 1, 13, lrStop, text_color=bearCol, text_size=FS)
+        table.cell(lastTradesDash, 0, 14, "Target 1", text_color=color.gray, text_size=FS)
+        table.cell(lastTradesDash, 1, 14, lrT1, text_color=#FF6D00, text_size=FS)
+        table.cell(lastTradesDash, 0, 15, "Target 2", text_color=color.gray, text_size=FS)
+        table.cell(lastTradesDash, 1, 15, lrT2, text_color=#FF6D00, text_size=FS)
+        table.cell(lastTradesDash, 0, 16, "Confidence", text_color=color.gray, text_size=FS)
+        table.cell(lastTradesDash, 1, 16, lrConf, text_color=color.orange, text_size=FS)
 else
     if not na(lastTradesDash)
         table.delete(lastTradesDash)
