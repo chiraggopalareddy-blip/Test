@@ -330,8 +330,8 @@ controlCol = controlSide == 1 ? bullCol : controlSide == -1 ? bearCol : color.gr
 
 //══════════════════════════════════════════════════════════════════════════════
 // NIFTY FUTURES OI + PRICE REGIMES (last 3 entries with timestamps)
-// NSE/MCX OI on TradingView is daily-only. Prefer *_OI service symbol (close = OI);
-// fall back to built-in openinterest on Daily if *_OI is missing.
+// NSE/MCX OI on TradingView: use *_OI service symbol (close = OI). Daily TF only.
+// Note: built-in `openinterest` is not available in all Pine environments — do not use it.
 //══════════════════════════════════════════════════════════════════════════════
 f_fmt_inr_qty(v) =>
     ad = math.abs(v)
@@ -343,13 +343,11 @@ f_regime_col(txt) =>
 // Build OI service ticker: NSE:NIFTY1! -> NSE:NIFTY1!_OI (leave as-is if already *_OI)
 oiSymbol = str.endswith(futSymbol, "_OI") ? futSymbol : futSymbol + "_OI"
 
-[oiFromSvc, oiFromSvcPrev] = request.security(oiSymbol, "D", [close, close[oiLookback]], barmerge.gaps_off, barmerge.lookahead_off, ignore_invalid_symbol=true)
-[oiFromBi, oiFromBiPrev] = request.security(futSymbol, "D", [openinterest, openinterest[oiLookback]], barmerge.gaps_off, barmerge.lookahead_off, ignore_invalid_symbol=true)
+[oiNowRaw, oiPrevRaw] = request.security(oiSymbol, "D", [close, close[oiLookback]], barmerge.gaps_off, barmerge.lookahead_off, ignore_invalid_symbol=true)
 [futPx, futPxPrev] = request.security(futSymbol, "D", [close, close[oiLookback]], barmerge.gaps_off, barmerge.lookahead_off, ignore_invalid_symbol=true)
 
-useOiSvc = not na(oiFromSvc) and oiFromSvc > 0
-oiNow = useOiSvc ? oiFromSvc : nz(oiFromBi, 0.0)
-oiPrev = useOiSvc ? nz(oiFromSvcPrev, 0.0) : nz(oiFromBiPrev, 0.0)
+oiNow = nz(oiNowRaw, 0.0)
+oiPrev = nz(oiPrevRaw, 0.0)
 oiDelta = oiNow - oiPrev
 pxNow = nz(futPx, close)
 pxPrev = nz(futPxPrev, pxNow)
@@ -741,6 +739,10 @@ rsiOb = rsi >= 58
 riskyLongScore = 0.0
 riskyShortScore = 0.0
 
+// Must call on every bar (not inside if) for consistent series history
+orHighCross = ta.crossover(close, nz(orHigh, high))
+orLowCross  = ta.crossunder(close, nz(orLow, low))
+
 if barstate.isconfirmed and inSession and not ideaActive
     // --- Risky BUY: bottoms near buy zone / local low ---
     if canRiskyBuy and nearBuyZone and atLocalLow
@@ -774,9 +776,9 @@ if barstate.isconfirmed and inSession and not ideaActive
         riskyShortScore += pRsi >= 55 ? 10.0 : 0.0
 
     // OR / VWAP break continuation (still risky, smaller targets)
-    if canRiskyBuy and orLocked and ta.crossover(close, nz(orHigh, high)) and close > open
+    if canRiskyBuy and orLocked and orHighCross and close > open
         riskyLongScore := math.max(riskyLongScore, 60.0)
-    if canRiskySell and orLocked and ta.crossunder(close, nz(orLow, low)) and close < open
+    if canRiskySell and orLocked and orLowCross and close < open
         riskyShortScore := math.max(riskyShortScore, 60.0)
 
 riskyBuy = barstate.isconfirmed and inSession and not ideaActive and canRiskyBuy and riskyLongScore >= riskyMinScore and riskyLongScore >= riskyShortScore
