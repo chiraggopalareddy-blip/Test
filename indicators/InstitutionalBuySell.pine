@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // 5m intraday A+ scalp engine. Non-repainting. Educational use only — not financial advice.
 //@version=5
-indicator("Institutional Algo Buy/Sell", shorttitle="IALGO", overlay=true, max_labels_count=500, max_boxes_count=20, max_lines_count=40)
+indicator("Institutional Algo Buy/Sell", shorttitle="IALGO", overlay=true, max_labels_count=500, max_boxes_count=500, max_lines_count=500)
 
 //══════════════════════════════════════════════════════════════════════════════
 // INPUTS
@@ -46,6 +46,14 @@ riskyT1R      = input.float(2.0, "Risky Target 1 R", minval=1.2, step=0.1, group
 riskyT2R      = input.float(3.5, "Risky Target 2 R", minval=2.0, step=0.1, group=grpRisky)
 riskyHoldBars = input.int(36, "Risky Max Hold Bars", minval=8, maxval=78, group=grpRisky)
 
+grpExtra = "Last Trades & Shadow Projection"
+showLastTables   = input.bool(false, "Show Last A+ / Risky Trade Tables", group=grpExtra, tooltip="Adds two tables with the most recently suggested A+ and Risky trades.")
+showShadowCandles = input.bool(false, "Show Shadow Candle Projection", group=grpExtra, tooltip="Projects translucent shadow candles for the full session from the open.")
+shadowSessionMin = input.int(370, "Shadow Session Minutes", minval=60, maxval=600, group=grpExtra, tooltip="NSE cash ≈ 370 min (09:15–15:25). Adjust for your market.")
+shadowBullBody   = input.color(color.new(#26A69A, 72), "Shadow Bull Body", group=grpExtra)
+shadowBearBody   = input.color(color.new(#EF5350, 72), "Shadow Bear Body", group=grpExtra)
+shadowWickCol    = input.color(color.new(#90A4AE, 55), "Shadow Wick", group=grpExtra)
+
 grpVis = "Colors"
 bullCol  = input.color(#089981, "Bull", group=grpVis)
 bearCol  = input.color(#F23645, "Bear", group=grpVis)
@@ -80,6 +88,7 @@ var float dayOpen = na
 var float dayHigh = na
 var float dayLow = na
 var int dayStartBar = na
+var int dayStartTime = na
 var float orHigh = na
 var float orLow = na
 var bool orLocked = false
@@ -89,12 +98,16 @@ if newDay
     dayHigh := high
     dayLow := low
     dayStartBar := bar_index
+    dayStartTime := time
     orHigh := high
     orLow := low
     orLocked := false
 else
     dayHigh := math.max(nz(dayHigh, high), high)
     dayLow := math.min(nz(dayLow, low), low)
+    if na(dayStartTime)
+        dayStartTime := time
+        dayStartBar := bar_index
 
 minsPerBar = timeframe.isseconds ? timeframe.multiplier / 60.0 : timeframe.isminutes ? float(timeframe.multiplier) : timeframe.isintraday ? float(timeframe.multiplier) : 60.0
 orBars = math.max(1, int(math.round(orMinutes / math.max(minsPerBar, 0.25))))
@@ -335,6 +348,14 @@ var string activeTrade = "FLAT"
 var float confidence = 0.0
 var bool ideaActive = false
 
+// Last suggested A+ (persists after idea closes)
+var string lastATrade = "-"
+var float lastAEntry = na
+var float lastAStop = na
+var float lastAT1 = na
+var float lastAT2 = na
+var float lastAConf = na
+
 // Reset sequence each new session day (intraday only)
 if newDay
     lastSide := 0
@@ -443,6 +464,12 @@ if buySignal
     activeTrade := "Long"
     confidence := math.min(99.0, longScore)
     ideaActive := true
+    lastATrade := "Long"
+    lastAEntry := entryPrice
+    lastAStop := stopPrice
+    lastAT1 := t1Price
+    lastAT2 := t2Price
+    lastAConf := confidence
 
 if sellSignal
     lastSide := -1
@@ -459,6 +486,12 @@ if sellSignal
     activeTrade := "Short"
     confidence := math.min(99.0, shortScore)
     ideaActive := true
+    lastATrade := "Short"
+    lastAEntry := entryPrice
+    lastAStop := stopPrice
+    lastAT1 := t1Price
+    lastAT2 := t2Price
+    lastAConf := confidence
 
 // Manage / invalidate A+ idea
 if ideaActive
@@ -539,6 +572,14 @@ var float riskyConf = 0.0
 var bool riskyActive = false
 var int riskySigBar = na
 var int riskySide = 0  // 1 long, -1 short
+
+// Last suggested Risky (persists after idea closes)
+var string lastRTrade = "-"
+var float lastREntry = na
+var float lastRStop = na
+var float lastRT1 = na
+var float lastRT2 = na
+var float lastRConf = na
 
 if newDay
     riskyTrade := "FLAT"
@@ -625,6 +666,12 @@ if riskyBuy
     riskyTrade := "Long"
     riskyConf := math.min(85.0, riskyLongScore)
     riskyActive := true
+    lastRTrade := "Long"
+    lastREntry := riskyEntry
+    lastRStop := riskyStop
+    lastRT1 := riskyT1
+    lastRT2 := riskyT2
+    lastRConf := riskyConf
 
 if riskySell
     riskySide := -1
@@ -638,6 +685,12 @@ if riskySell
     riskyTrade := "Short"
     riskyConf := math.min(85.0, riskyShortScore)
     riskyActive := true
+    lastRTrade := "Short"
+    lastREntry := riskyEntry
+    lastRStop := riskyStop
+    lastRT1 := riskyT1
+    lastRT2 := riskyT2
+    lastRConf := riskyConf
 
 if riskyActive
     rHeld = bar_index - nz(riskySigBar, bar_index)
@@ -751,6 +804,167 @@ if barstate.islast
 
     table.cell(riskyDash, 0, 6, "Confidence", text_color=color.gray, text_size=FS)
     table.cell(riskyDash, 1, 6, rDashConf, text_color=rDashConfCol, text_size=FS)
+
+//══════════════════════════════════════════════════════════════════════════════
+// LAST A+ / LAST RISKY TABLES (checkbox)
+//══════════════════════════════════════════════════════════════════════════════
+var table lastAPlusDash = na
+var table lastRiskyDash = na
+
+laTrade = lastATrade
+laEntry = not na(lastAEntry) ? str.tostring(lastAEntry, format.mintick) : "-"
+laStop  = not na(lastAStop) ? str.tostring(lastAStop, format.mintick) : "-"
+laT1    = not na(lastAT1) ? str.tostring(lastAT1, format.mintick) : "-"
+laT2    = not na(lastAT2) ? str.tostring(lastAT2, format.mintick) : "-"
+laConf  = not na(lastAConf) ? str.tostring(lastAConf, "#.0") + "%" : "-"
+laCol   = lastATrade == "Long" ? bullCol : lastATrade == "Short" ? bearCol : color.gray
+
+lrTrade = lastRTrade
+lrEntry = not na(lastREntry) ? str.tostring(lastREntry, format.mintick) : "-"
+lrStop  = not na(lastRStop) ? str.tostring(lastRStop, format.mintick) : "-"
+lrT1    = not na(lastRT1) ? str.tostring(lastRT1, format.mintick) : "-"
+lrT2    = not na(lastRT2) ? str.tostring(lastRT2, format.mintick) : "-"
+lrConf  = not na(lastRConf) ? str.tostring(lastRConf, "#.0") + "%" : "-"
+lrCol   = lastRTrade == "Long" ? bullCol : lastRTrade == "Short" ? bearCol : color.gray
+
+if showLastTables
+    if na(lastAPlusDash)
+        lastAPlusDash := table.new(position.middle_left, 2, 7, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#455A64, 50))
+    if na(lastRiskyDash)
+        lastRiskyDash := table.new(position.bottom_left, 2, 7, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#FF6D00, 55))
+    if barstate.islast
+        table.cell(lastAPlusDash, 0, 0, "Last A+ Trade", text_color=color.white, text_size=FS, bgcolor=color.new(bullCol, 75))
+        table.cell(lastAPlusDash, 1, 0, "", text_size=FS, bgcolor=color.new(bullCol, 75))
+        table.cell(lastAPlusDash, 0, 1, "Trade", text_color=color.gray, text_size=FS)
+        table.cell(lastAPlusDash, 1, 1, laTrade, text_color=laCol, text_size=FS)
+        table.cell(lastAPlusDash, 0, 2, "Entry", text_color=color.gray, text_size=FS)
+        table.cell(lastAPlusDash, 1, 2, laEntry, text_color=color.white, text_size=FS)
+        table.cell(lastAPlusDash, 0, 3, "Stop", text_color=color.gray, text_size=FS)
+        table.cell(lastAPlusDash, 1, 3, laStop, text_color=bearCol, text_size=FS)
+        table.cell(lastAPlusDash, 0, 4, "Target 1", text_color=color.gray, text_size=FS)
+        table.cell(lastAPlusDash, 1, 4, laT1, text_color=bullCol, text_size=FS)
+        table.cell(lastAPlusDash, 0, 5, "Target 2", text_color=color.gray, text_size=FS)
+        table.cell(lastAPlusDash, 1, 5, laT2, text_color=bullCol, text_size=FS)
+        table.cell(lastAPlusDash, 0, 6, "Confidence", text_color=color.gray, text_size=FS)
+        table.cell(lastAPlusDash, 1, 6, laConf, text_color=color.orange, text_size=FS)
+
+        table.cell(lastRiskyDash, 0, 0, "Last Risky Trade", text_color=color.white, text_size=FS, bgcolor=color.new(#FF6D00, 70))
+        table.cell(lastRiskyDash, 1, 0, "", text_size=FS, bgcolor=color.new(#FF6D00, 70))
+        table.cell(lastRiskyDash, 0, 1, "Trade", text_color=color.gray, text_size=FS)
+        table.cell(lastRiskyDash, 1, 1, lrTrade, text_color=lrCol, text_size=FS)
+        table.cell(lastRiskyDash, 0, 2, "Entry", text_color=color.gray, text_size=FS)
+        table.cell(lastRiskyDash, 1, 2, lrEntry, text_color=color.white, text_size=FS)
+        table.cell(lastRiskyDash, 0, 3, "Stop", text_color=color.gray, text_size=FS)
+        table.cell(lastRiskyDash, 1, 3, lrStop, text_color=bearCol, text_size=FS)
+        table.cell(lastRiskyDash, 0, 4, "Target 1", text_color=color.gray, text_size=FS)
+        table.cell(lastRiskyDash, 1, 4, lrT1, text_color=#FF6D00, text_size=FS)
+        table.cell(lastRiskyDash, 0, 5, "Target 2", text_color=color.gray, text_size=FS)
+        table.cell(lastRiskyDash, 1, 5, lrT2, text_color=#FF6D00, text_size=FS)
+        table.cell(lastRiskyDash, 0, 6, "Confidence", text_color=color.gray, text_size=FS)
+        table.cell(lastRiskyDash, 1, 6, lrConf, text_color=color.orange, text_size=FS)
+else
+    if not na(lastAPlusDash)
+        table.delete(lastAPlusDash)
+        lastAPlusDash := na
+    if not na(lastRiskyDash)
+        table.delete(lastRiskyDash)
+        lastRiskyDash := na
+
+//══════════════════════════════════════════════════════════════════════════════
+// SHADOW CANDLE PROJECTION (checkbox) — full session from the open
+// Frozen at session open using ADR proj high/low + gap direction.
+//══════════════════════════════════════════════════════════════════════════════
+var box[] shBodies = array.new_box()
+var line[] shWicks = array.new_line()
+var bool shBuilt = false
+var float shAnchorOpen = na
+var float shAnchorHigh = na
+var float shAnchorLow = na
+var int shDir = 0
+var int shStartT = na
+var int shBars = na
+
+f_clear_shadows() =>
+    if array.size(shBodies) > 0
+        for i = 0 to array.size(shBodies) - 1
+            box.delete(array.get(shBodies, i))
+        array.clear(shBodies)
+    if array.size(shWicks) > 0
+        for j = 0 to array.size(shWicks) - 1
+            line.delete(array.get(shWicks, j))
+        array.clear(shWicks)
+
+f_shadow_close(prog, dir, o0, hi, lo) =>
+    // prog in [0,1]; builds an intraday path toward extremes
+    px = o0
+    if dir > 0
+        wave = math.sin(prog * math.pi * 1.15)
+        px := o0 + (hi - o0) * (0.55 * prog + 0.45 * math.max(wave, 0.0)) - (hi - o0) * 0.08 * math.max(prog - 0.75, 0.0) / 0.25
+    else if dir < 0
+        wave = math.sin(prog * math.pi * 1.15)
+        px := o0 - (o0 - lo) * (0.55 * prog + 0.45 * math.max(wave, 0.0)) + (o0 - lo) * 0.08 * math.max(prog - 0.75, 0.0) / 0.25
+    else
+        mid = (hi + lo) * 0.5
+        amp = (hi - lo) * 0.28
+        px := mid + amp * math.sin(prog * math.pi * 2.0)
+    math.max(lo, math.min(hi, px))
+
+f_build_shadows(startT, nBars, barMs, o0, hi, lo, dir) =>
+    f_clear_shadows()
+    if nBars < 2 or na(startT) or barMs <= 0
+        false
+    else
+        prevC = o0
+        for i = 0 to nBars - 1
+            t1 = startT + i * barMs
+            t2 = t1 + barMs - 1
+            prog0 = nBars <= 1 ? 0.0 : i / float(nBars - 1)
+            prog1 = nBars <= 1 ? 1.0 : math.min(1.0, (i + 1) / float(nBars - 1))
+            cOpen = i == 0 ? o0 : prevC
+            cClose = f_shadow_close(prog1, dir, o0, hi, lo)
+            // Wick model from path volatility
+            wick = math.max((hi - lo) * 0.02, atr * 0.12)
+            cHigh = math.max(cOpen, cClose) + wick * (0.35 + 0.65 * math.abs(math.sin((i + 1) * 0.7)))
+            cLow = math.min(cOpen, cClose) - wick * (0.35 + 0.65 * math.abs(math.cos((i + 1) * 0.7)))
+            cHigh := math.min(hi, cHigh)
+            cLow := math.max(lo, cLow)
+            bull = cClose >= cOpen
+            bodyTop = math.max(cOpen, cClose)
+            bodyBot = math.min(cOpen, cClose)
+            if bodyTop - bodyBot < syminfo.mintick
+                bodyTop := bodyBot + syminfo.mintick
+            b = box.new(t1, bodyTop, t2, bodyBot, xloc=xloc.bar_time, border_color=bull ? color.new(#26A69A, 40) : color.new(#EF5350, 40), bgcolor=bull ? shadowBullBody : shadowBearBody, border_width=1)
+            w = line.new(t1 + math.round(barMs * 0.5), cHigh, t1 + math.round(barMs * 0.5), cLow, xloc=xloc.bar_time, color=shadowWickCol, width=1)
+            array.push(shBodies, b)
+            array.push(shWicks, w)
+            prevC := cClose
+        true
+
+barMs = math.max(1, int(minsPerBar * 60.0 * 1000.0))
+shadowBarsNeeded = math.max(2, int(math.round(shadowSessionMin / math.max(minsPerBar, 0.25))))
+shadowBarsNeeded := math.min(shadowBarsNeeded, 150)
+
+if newDay
+    shBuilt := false
+    f_clear_shadows()
+
+// Build once at session open (or when enabled mid-session on first opportunity)
+needShadowBuild = showShadowCandles and not shBuilt and not na(dayStartTime) and (newDay or barsFromOpen <= 1 or (barstate.islast and inSession))
+if needShadowBuild and showShadowCandles
+    shAnchorOpen := nz(dayOpen, open)
+    shAnchorHigh := projHigh
+    shAnchorLow := projLow
+    gap = shAnchorOpen - nz(pdc, shAnchorOpen)
+    shDir := math.abs(gap) < atr * 0.15 ? 0 : gap > 0 ? 1 : -1
+    shStartT := dayStartTime
+    shBars := shadowBarsNeeded
+    built = f_build_shadows(shStartT, shBars, barMs, shAnchorOpen, shAnchorHigh, shAnchorLow, shDir)
+    shBuilt := built
+
+if not showShadowCandles
+    if shBuilt or array.size(shBodies) > 0
+        f_clear_shadows()
+    shBuilt := false
 
 alertcondition(buySignal, title="A+ BUY scalp", message="IALGO A+ BUY {{ticker}} @ {{close}}")
 alertcondition(sellSignal, title="A+ SELL scalp", message="IALGO A+ SELL {{ticker}} @ {{close}}")

@@ -6,13 +6,16 @@
 
 [`indicators/InstitutionalBuySell.pine`](indicators/InstitutionalBuySell.pine)
 
-## Right-side trade tables
+## Optional panels (checkboxes)
 
-**A+ Trade Ideas** (middle-right) — fills only on a live A+ Long/Short; else `-`.
+**Show Last A+ / Risky Trade Tables** — left-side tables:
+- Last A+ Trade
+- Last Risky Trade  
 
-**Risky Trades** (bottom-right) — high risk / high reward ideas (OR/VWAP breakouts, near-A+ zone attempts, momentum stretch). Wider targets toward projected day high/low. Fills only when a risky setup is live; else `-`. Cleared if an A+ takes over.
+Stores the most recently suggested plan (stays after the live idea clears).
 
-Both show: Trade · Entry · Stop · Target 1 · Target 2 · Confidence (`xx.x%`).
+**Show Shadow Candle Projection** — draws translucent projected candles for the full session from the open (gap direction + ADR projected high/low). Enable only when you want the path overlay; disable to clear.
+
 
 ## Signals (5m scalping)
 
