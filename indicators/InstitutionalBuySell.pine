@@ -62,8 +62,8 @@ zoneBuyC = input.color(color.new(#089981, 85), "Buy Zone", group=grpVis)
 zoneSellC= input.color(color.new(#F23645, 85), "Sell Zone", group=grpVis)
 
 grpOi = "Nifty Futures OI"
-futSymbol   = input.symbol("NSE:NIFTY1!", "Futures Symbol (OI)", group=grpOi, tooltip="Continuous Nifty futures with OI. Change if your feed uses another ticker.")
-oiLookback  = input.int(3, "OI Regime Lookback (bars)", minval=1, maxval=12, group=grpOi)
+futSymbol   = input.symbol("NSE:NIFTY1!", "Futures Symbol", group=grpOi, tooltip="Continuous Nifty futures (e.g. NSE:NIFTY1!). OI is read from the matching *_OI service symbol on the daily TF (NSE OI is daily-only on TradingView).")
+oiLookback  = input.int(1, "OI Regime Lookback (days)", minval=1, maxval=5, group=grpOi)
 showOiBlock = input.bool(true, "Show Futures OI Block", group=grpOi)
 
 FS = size.tiny   // compact tables — avoids overlap on TradingView
@@ -330,83 +330,84 @@ controlCol = controlSide == 1 ? bullCol : controlSide == -1 ? bearCol : color.gr
 
 //══════════════════════════════════════════════════════════════════════════════
 // NIFTY FUTURES OI + PRICE REGIMES (last 3 entries with timestamps)
+// NSE/MCX OI on TradingView is daily-only. Prefer *_OI service symbol (close = OI);
+// fall back to built-in openinterest on Daily if *_OI is missing.
 //══════════════════════════════════════════════════════════════════════════════
 f_fmt_inr_qty(v) =>
     ad = math.abs(v)
-    ad >= 10000000.0 ? str.tostring(v / 10000000.0, "#.##") + "Cr" : ad >= 100000.0 ? str.tostring(v / 100000.0, "#.##") + "L" : ad >= 1000.0 ? str.tostring(v / 1000.0, "#.##") + "K" : str.tostring(v, "#")
+    ad >= 10000000.0 ? str.tostring(ad / 10000000.0, "#.##") + "Cr" : ad >= 100000.0 ? str.tostring(ad / 100000.0, "#.##") + "L" : ad >= 1000.0 ? str.tostring(ad / 1000.0, "#.##") + "K" : str.tostring(ad, "#")
 
-[futOi, futClose] = request.security(futSymbol, timeframe.period, [openinterest, close], barmerge.gaps_off, barmerge.lookahead_off)
+f_regime_col(txt) =>
+    str.contains(txt, "Long Buildup") ? bullCol : str.contains(txt, "Short Buildup") ? bearCol : str.contains(txt, "Short Covering") ? #26A69A : str.contains(txt, "Long Unwinding") ? #FF9800 : color.gray
 
-oiNow = nz(futOi)
-oiPrev = nz(futOi[oiLookback])
+// Build OI service ticker: NSE:NIFTY1! -> NSE:NIFTY1!_OI (leave as-is if already *_OI)
+oiSymbol = str.endswith(futSymbol, "_OI") ? futSymbol : futSymbol + "_OI"
+
+[oiFromSvc, oiFromSvcPrev] = request.security(oiSymbol, "D", [close, close[oiLookback]], barmerge.gaps_off, barmerge.lookahead_off, ignore_invalid_symbol=true)
+[oiFromBi, oiFromBiPrev] = request.security(futSymbol, "D", [openinterest, openinterest[oiLookback]], barmerge.gaps_off, barmerge.lookahead_off, ignore_invalid_symbol=true)
+[futPx, futPxPrev] = request.security(futSymbol, "D", [close, close[oiLookback]], barmerge.gaps_off, barmerge.lookahead_off, ignore_invalid_symbol=true)
+
+useOiSvc = not na(oiFromSvc) and oiFromSvc > 0
+oiNow = useOiSvc ? oiFromSvc : nz(oiFromBi, 0.0)
+oiPrev = useOiSvc ? nz(oiFromSvcPrev, 0.0) : nz(oiFromBiPrev, 0.0)
 oiDelta = oiNow - oiPrev
-pxDelta = close - close[oiLookback]
-oiBarDelta = oiNow - nz(futOi[1])
+pxNow = nz(futPx, close)
+pxPrev = nz(futPxPrev, pxNow)
+pxDelta = pxNow - pxPrev
 
 oiRising = oiDelta > 0
 oiFalling = oiDelta < 0
 pxUp = pxDelta > 0
 pxDn = pxDelta < 0
+oiHave = oiNow > 0
 
 oiRegime = "Flat"
 oiRead = "Waiting for OI..."
-oiRegCol = color.gray
-if not na(futOi) and oiNow > 0
-    if pxUp and oiRising
-        oiRegime := "Long Buildup"
-        oiRead := "Buyers adding longs"
-        oiRegCol := bullCol
-    else if pxDn and oiRising
-        oiRegime := "Short Buildup"
-        oiRead := "Sellers adding on dips"
-        oiRegCol := bearCol
-    else if pxUp and oiFalling
-        oiRegime := "Short Covering"
-        oiRead := "Shorts exiting on bounce"
-        oiRegCol := color.new(#26A69A, 0)
-    else if pxDn and oiFalling
-        oiRegime := "Long Unwinding"
-        oiRead := "Longs exiting into fall"
-        oiRegCol := color.new(#FF9800, 0)
-    else
-        oiRegime := "Flat"
-        oiRead := "No clear OI regime"
-        oiRegCol := color.gray
-else
+if not oiHave
     oiRegime := "N/A"
-    oiRead := "OI unavailable — check futures symbol"
-    oiRegCol := color.gray
+    oiRead := "OI unavailable - set Futures Symbol"
+else if pxUp and oiRising
+    oiRegime := "Long Buildup"
+    oiRead := "Buyers adding longs"
+else if pxDn and oiRising
+    oiRegime := "Short Buildup"
+    oiRead := "Sellers adding on dips"
+else if pxUp and oiFalling
+    oiRegime := "Short Covering"
+    oiRead := "Shorts exiting on bounce"
+else if pxDn and oiFalling
+    oiRegime := "Long Unwinding"
+    oiRead := "Longs exiting into fall"
+else
+    oiRegime := "Flat"
+    oiRead := "No clear OI regime"
 
-oiArrow = oiBarDelta > 0 ? " ▲" : oiBarDelta < 0 ? " ▼" : " ■"
-oiDeltaSign = oiBarDelta > 0 ? "+" : ""
-futOiTxt = na(futOi) or oiNow <= 0 ? "OI n/a — set futures symbol" : f_fmt_inr_qty(oiNow) + "  Δ " + oiDeltaSign + f_fmt_inr_qty(oiBarDelta) + oiArrow
-futOiCol = oiBarDelta > 0 ? bullCol : oiBarDelta < 0 ? bearCol : color.white
+oiArrow = oiDelta > 0 ? " ^" : oiDelta < 0 ? " v" : " ="
+oiDeltaSign = oiDelta > 0 ? "+" : oiDelta < 0 ? "-" : ""
+futOiTxt = not oiHave ? "OI n/a - set Futures Symbol" : f_fmt_inr_qty(oiNow) + "  D " + oiDeltaSign + f_fmt_inr_qty(oiDelta) + oiArrow
+futOiCol = oiDelta > 0 ? bullCol : oiDelta < 0 ? bearCol : color.white
+oiRegCol = f_regime_col(oiRegime)
 
 var string oiLog1 = "-"
 var string oiLog2 = "-"
 var string oiLog3 = "-"
-var color oiLogCol1 = color.gray
-var color oiLogCol2 = color.gray
-var color oiLogCol3 = color.gray
 var string oiLastRegime = ""
 
 if newDay
     oiLog1 := "-"
     oiLog2 := "-"
     oiLog3 := "-"
-    oiLogCol1 := color.gray
-    oiLogCol2 := color.gray
-    oiLogCol3 := color.gray
     oiLastRegime := ""
 
-if inSession and barstate.isconfirmed and oiRegime != "N/A" and oiRegime != "Flat" and oiRegime != oiLastRegime
+if inSession and barstate.isconfirmed and oiHave and oiRegime != "Flat" and oiRegime != oiLastRegime
     oiLog3 := oiLog2
-    oiLogCol3 := oiLogCol2
     oiLog2 := oiLog1
-    oiLogCol2 := oiLogCol1
     oiLog1 := str.format_time(time, "HH:mm") + "  " + oiRegime
-    oiLogCol1 := oiRegCol
     oiLastRegime := oiRegime
+
+oiLogCol1 = f_regime_col(oiLog1)
+oiLogCol2 = f_regime_col(oiLog2)
+oiLogCol3 = f_regime_col(oiLog3)
 
 //══════════════════════════════════════════════════════════════════════════════
 // A+ INTRADAY SCALP SIGNALS (5m) — non-repaint, session-only

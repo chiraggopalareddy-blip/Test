@@ -32,8 +32,9 @@ Unchanged — VWAP σ + Opening Range + prior day liquidity bands.
 
 ## Dashboard (top-right)
 
-Live Bias · Projected Day Bias · What to do? · Projected Day High/Low · Day Range  
-(all small, same font)
+Live Bias · Projected Day Bias · Control · Futures OI · OI Regime (x3) · OI Read · What to do? · Projected Day High/Low · Day Range  
+
+**Futures OI:** reads NSE daily OI from `NSE:NIFTY1!_OI` (service symbol). Change **Futures Symbol** in settings if needed. True options-chain CE/PE OI is not available in Pine.
 
 ## Use
 
