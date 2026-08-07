@@ -61,7 +61,8 @@ bearCol  = input.color(#F23645, "Bear", group=grpVis)
 zoneBuyC = input.color(color.new(#089981, 85), "Buy Zone", group=grpVis)
 zoneSellC= input.color(color.new(#F23645, 85), "Sell Zone", group=grpVis)
 
-FS = size.small
+FS = size.tiny   // compact tables — avoids overlap on TradingView
+FS_LBL = size.tiny
 
 //══════════════════════════════════════════════════════════════════════════════
 // CORE
@@ -551,9 +552,9 @@ if ideaActive
 
 // Plot signals
 if buySignal
-    label.new(useSweepLong ? bar_index : bar_index - rightBars, useSweepLong ? low : pl, "A+ Buy", style=label.style_label_up, color=bullCol, textcolor=color.white, size=FS, yloc=yloc.price)
+    label.new(useSweepLong ? bar_index : bar_index - rightBars, useSweepLong ? low : pl, "A+ Buy", style=label.style_label_up, color=bullCol, textcolor=color.white, size=FS_LBL, yloc=yloc.price)
 if sellSignal
-    label.new(useSweepShort ? bar_index : bar_index - rightBars, useSweepShort ? high : ph, "A+ Sell", style=label.style_label_down, color=bearCol, textcolor=color.white, size=FS, yloc=yloc.price)
+    label.new(useSweepShort ? bar_index : bar_index - rightBars, useSweepShort ? high : ph, "A+ Sell", style=label.style_label_down, color=bearCol, textcolor=color.white, size=FS_LBL, yloc=yloc.price)
 
 var line lnEntry = na
 var line lnStop = na
@@ -767,9 +768,9 @@ if ideaActive and riskyActive
 
 // Chart markers for risky triggers
 if riskyBuy
-    label.new(bar_index, low, "Risky Buy", style=label.style_label_up, color=color.new(#FF6D00, 0), textcolor=color.white, size=FS, yloc=yloc.price)
+    label.new(bar_index, low, "Risky Buy", style=label.style_label_up, color=color.new(#FF6D00, 0), textcolor=color.white, size=FS_LBL, yloc=yloc.price)
 if riskySell
-    label.new(bar_index, high, "Risky Sell", style=label.style_label_down, color=color.new(#FF6D00, 0), textcolor=color.white, size=FS, yloc=yloc.price)
+    label.new(bar_index, high, "Risky Sell", style=label.style_label_down, color=color.new(#FF6D00, 0), textcolor=color.white, size=FS_LBL, yloc=yloc.price)
 
 //══════════════════════════════════════════════════════════════════════════════
 // A+ TRADE IDEA DASH FIELDS — ONLY when A+ live; otherwise "-"
@@ -822,62 +823,52 @@ if barstate.islast
     table.cell(topDash, 1, 6, str.tostring(projRange, format.mintick), text_color=color.white, text_size=FS)
 
 //══════════════════════════════════════════════════════════════════════════════
-// RIGHT SIDE TABLES
-// A+ Trade Ideas (middle-right)  |  Risky Trades (bottom-right, below)
+// RIGHT SIDE — combined compact A+ + Risky (middle-right, avoids bottom cutoff)
 //══════════════════════════════════════════════════════════════════════════════
-var table aPlusDash = table.new(position.middle_right, 2, 8, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#455A64, 50))
-var table riskyDash = table.new(position.bottom_right, 2, 8, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#FF6D00, 55))
+var table rightIdeasDash = table.new(position.middle_right, 2, 18, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#455A64, 50))
 
 if barstate.islast
     // —— A+ Trade Ideas ——
-    table.cell(aPlusDash, 0, 0, "A+ Trade Ideas", text_color=color.white, text_size=FS, bgcolor=color.new(bullCol, 75))
-    table.cell(aPlusDash, 1, 0, "", text_color=color.white, text_size=FS, bgcolor=color.new(bullCol, 75))
+    table.cell(rightIdeasDash, 0, 0, "A+ Trade Ideas", text_color=color.white, text_size=FS, bgcolor=color.new(bullCol, 75))
+    table.cell(rightIdeasDash, 1, 0, "", text_size=FS, bgcolor=color.new(bullCol, 75))
+    table.cell(rightIdeasDash, 0, 1, "Triggered", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 1, dashWhen, text_color=color.white, text_size=FS)
+    table.cell(rightIdeasDash, 0, 2, "Trade", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 2, dashTrade, text_color=dashTradeCol, text_size=FS)
+    table.cell(rightIdeasDash, 0, 3, "Entry", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 3, dashEntry, text_color=color.white, text_size=FS)
+    table.cell(rightIdeasDash, 0, 4, "Stop", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 4, dashStop, text_color=ideaActive ? bearCol : color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 0, 5, "Target 1", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 5, dashT1, text_color=ideaActive ? bullCol : color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 0, 6, "Target 2", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 6, dashT2, text_color=ideaActive ? bullCol : color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 0, 7, "Confidence", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 7, dashConf, text_color=dashConfCol, text_size=FS)
 
-    table.cell(aPlusDash, 0, 1, "Triggered", text_color=color.gray, text_size=FS)
-    table.cell(aPlusDash, 1, 1, dashWhen, text_color=color.white, text_size=FS)
-
-    table.cell(aPlusDash, 0, 2, "Trade", text_color=color.gray, text_size=FS)
-    table.cell(aPlusDash, 1, 2, dashTrade, text_color=dashTradeCol, text_size=FS)
-
-    table.cell(aPlusDash, 0, 3, "Entry", text_color=color.gray, text_size=FS)
-    table.cell(aPlusDash, 1, 3, dashEntry, text_color=color.white, text_size=FS)
-
-    table.cell(aPlusDash, 0, 4, "Stop", text_color=color.gray, text_size=FS)
-    table.cell(aPlusDash, 1, 4, dashStop, text_color=ideaActive ? bearCol : color.gray, text_size=FS)
-
-    table.cell(aPlusDash, 0, 5, "Target 1", text_color=color.gray, text_size=FS)
-    table.cell(aPlusDash, 1, 5, dashT1, text_color=ideaActive ? bullCol : color.gray, text_size=FS)
-
-    table.cell(aPlusDash, 0, 6, "Target 2", text_color=color.gray, text_size=FS)
-    table.cell(aPlusDash, 1, 6, dashT2, text_color=ideaActive ? bullCol : color.gray, text_size=FS)
-
-    table.cell(aPlusDash, 0, 7, "Confidence", text_color=color.gray, text_size=FS)
-    table.cell(aPlusDash, 1, 7, dashConf, text_color=dashConfCol, text_size=FS)
+    // Spacer
+    table.cell(rightIdeasDash, 0, 8, "", text_size=FS)
+    table.cell(rightIdeasDash, 1, 8, "", text_size=FS)
+    table.cell(rightIdeasDash, 0, 9, "", text_size=FS)
+    table.cell(rightIdeasDash, 1, 9, "", text_size=FS)
 
     // —— Risky Trades ——
-    table.cell(riskyDash, 0, 0, "Risky Trades", text_color=color.white, text_size=FS, bgcolor=color.new(#FF6D00, 70))
-    table.cell(riskyDash, 1, 0, "", text_color=color.white, text_size=FS, bgcolor=color.new(#FF6D00, 70))
-
-    table.cell(riskyDash, 0, 1, "Triggered", text_color=color.gray, text_size=FS)
-    table.cell(riskyDash, 1, 1, rDashWhen, text_color=color.white, text_size=FS)
-
-    table.cell(riskyDash, 0, 2, "Trade", text_color=color.gray, text_size=FS)
-    table.cell(riskyDash, 1, 2, rDashTrade, text_color=rDashTradeCol, text_size=FS)
-
-    table.cell(riskyDash, 0, 3, "Entry", text_color=color.gray, text_size=FS)
-    table.cell(riskyDash, 1, 3, rDashEntry, text_color=color.white, text_size=FS)
-
-    table.cell(riskyDash, 0, 4, "Stop", text_color=color.gray, text_size=FS)
-    table.cell(riskyDash, 1, 4, rDashStop, text_color=riskyActive ? bearCol : color.gray, text_size=FS)
-
-    table.cell(riskyDash, 0, 5, "Target 1", text_color=color.gray, text_size=FS)
-    table.cell(riskyDash, 1, 5, rDashT1, text_color=riskyActive ? #FF6D00 : color.gray, text_size=FS)
-
-    table.cell(riskyDash, 0, 6, "Target 2", text_color=color.gray, text_size=FS)
-    table.cell(riskyDash, 1, 6, rDashT2, text_color=riskyActive ? #FF6D00 : color.gray, text_size=FS)
-
-    table.cell(riskyDash, 0, 7, "Confidence", text_color=color.gray, text_size=FS)
-    table.cell(riskyDash, 1, 7, rDashConf, text_color=rDashConfCol, text_size=FS)
+    table.cell(rightIdeasDash, 0, 10, "Risky Trades", text_color=color.white, text_size=FS, bgcolor=color.new(#FF6D00, 70))
+    table.cell(rightIdeasDash, 1, 10, "", text_size=FS, bgcolor=color.new(#FF6D00, 70))
+    table.cell(rightIdeasDash, 0, 11, "Triggered", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 11, rDashWhen, text_color=color.white, text_size=FS)
+    table.cell(rightIdeasDash, 0, 12, "Trade", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 12, rDashTrade, text_color=rDashTradeCol, text_size=FS)
+    table.cell(rightIdeasDash, 0, 13, "Entry", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 13, rDashEntry, text_color=color.white, text_size=FS)
+    table.cell(rightIdeasDash, 0, 14, "Stop", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 14, rDashStop, text_color=riskyActive ? bearCol : color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 0, 15, "Target 1", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 15, rDashT1, text_color=riskyActive ? #FF6D00 : color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 0, 16, "Target 2", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 16, rDashT2, text_color=riskyActive ? #FF6D00 : color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 0, 17, "Confidence", text_color=color.gray, text_size=FS)
+    table.cell(rightIdeasDash, 1, 17, rDashConf, text_color=rDashConfCol, text_size=FS)
 
 //══════════════════════════════════════════════════════════════════════════════
 // LAST A+ / LAST RISKY — single top-left table (spaced + higher on screen)
