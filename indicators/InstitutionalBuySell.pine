@@ -39,12 +39,13 @@ t1R           = input.float(1.2, "Target 1 R", minval=0.8, step=0.1, group=grpRi
 t2R           = input.float(2.0, "Target 2 R", minval=1.2, step=0.1, group=grpRisk)
 
 grpRisky = "Risky Trades (High Risk / High Reward)"
-riskyMinScore = input.float(62.0, "Risky Min Score", minval=50, maxval=85, group=grpRisky)
-riskyMaxScore = input.float(87.0, "Risky Max Score (below A+)", minval=70, maxval=95, group=grpRisky)
-riskyStopAtr  = input.float(0.55, "Risky Stop (ATR)", minval=0.25, step=0.05, group=grpRisky)
-riskyT1R      = input.float(2.0, "Risky Target 1 R", minval=1.2, step=0.1, group=grpRisky)
-riskyT2R      = input.float(3.5, "Risky Target 2 R", minval=2.0, step=0.1, group=grpRisky)
-riskyHoldBars = input.int(36, "Risky Max Hold Bars", minval=8, maxval=78, group=grpRisky)
+riskyMinScore = input.float(55.0, "Risky Min Score", minval=40, maxval=85, group=grpRisky)
+riskyStopAtr  = input.float(0.35, "Risky Stop (ATR)", minval=0.15, step=0.05, group=grpRisky)
+riskyT1R      = input.float(1.2, "Risky Target 1 R", minval=0.8, step=0.1, group=grpRisky, tooltip="Matched to A+ scalp targets.")
+riskyT2R      = input.float(2.0, "Risky Target 2 R", minval=1.2, step=0.1, group=grpRisky, tooltip="Matched to A+ scalp targets.")
+riskyHoldBars = input.int(24, "Risky Max Hold Bars", minval=6, maxval=78, group=grpRisky)
+riskyCooldown  = input.int(3, "Risky Cooldown Bars", minval=1, maxval=20, group=grpRisky)
+riskySwingLb  = input.int(5, "Risky Swing Lookback", minval=3, maxval=15, group=grpRisky)
 
 grpExtra = "Last Trades & Shadow Projection"
 showLastTables   = input.bool(false, "Show Last A+ / Risky Trade Tables", group=grpExtra, tooltip="Adds two tables with the most recently suggested A+ and Risky trades.")
@@ -561,10 +562,8 @@ if not ideaActive
 plot(ema21, "EMA21", color=color.new(#78909C, 60))
 
 //══════════════════════════════════════════════════════════════════════════════
-// RISKY TRADES — high risk / high reward (dynamic, session-only)
-// Separate from A+. Populates only when a risky setup is live; else "-".
-// Paths: (1) aggressive OR/VWAP breakout toward proj H/L
-//        (2) near-A+ zone attempt that didn't clear A+ score
+// RISKY TRADES — catch more intraday tops/bottoms (independent of A+ score)
+// Targets sized like A+ (default 1.2R / 2.0R). Labels: Risky Buy / Risky Sell.
 //══════════════════════════════════════════════════════════════════════════════
 var string riskyTrade = "FLAT"
 var float riskyEntry = na
@@ -574,9 +573,8 @@ var float riskyT2 = na
 var float riskyConf = 0.0
 var bool riskyActive = false
 var int riskySigBar = na
-var int riskySide = 0  // 1 long, -1 short
+var int riskySide = 0
 
-// Last suggested Risky (persists after idea closes)
 var string lastRTrade = "-"
 var float lastREntry = na
 var float lastRStop = na
@@ -594,64 +592,69 @@ if newDay
     riskyT2 := na
     riskyConf := 0.0
     riskySigBar := na
+    // keep riskySide for alternation across day, reset below if desired:
     riskySide := 0
 
-// Breakout / breakdown momentum (HRHR)
-orBreakUp = orLocked and ta.crossover(close, nz(orHigh, high)) and relVol >= 1.05 and close > open
-orBreakDn = orLocked and ta.crossunder(close, nz(orLow, low)) and relVol >= 1.05 and close < open
-vwapBreakUp = ta.crossover(close, vwap) and close > nz(dayOpen, open) and relVol >= 1.1 and diBull
-vwapBreakDn = ta.crossunder(close, vwap) and close < nz(dayOpen, open) and relVol >= 1.1 and diBear
-stretchLong = close >= vwapU1 and close > open and high >= nz(dayHigh, high) - atr * 0.15
-stretchShort = close <= vwapL1 and close < open and low <= nz(dayLow, low) + atr * 0.15
+riskyCooled = na(riskySigBar) or (bar_index - riskySigBar) >= riskyCooldown
+canRiskyBuy  = (riskySide != 1) and riskyCooled and not riskyActive
+canRiskySell = (riskySide != -1) and riskyCooled and not riskyActive
+
+// Local swing extremes (fast, for scalps)
+riskSwingLow  = ta.lowest(low, riskySwingLb)
+riskSwingHigh = ta.highest(high, riskySwingLb)
+atLocalLow  = low <= riskSwingLow + atr * 0.05
+atLocalHigh = high >= riskSwingHigh - atr * 0.05
+
+// Soft zone touch (wider than A+)
+nearBuyZone  = low <= buyZoneTop + atr * 0.25
+nearSellZone = high >= sellZoneBot - atr * 0.25
+rsiOs = rsi <= 42
+rsiOb = rsi >= 58
 
 riskyLongScore = 0.0
 riskyShortScore = 0.0
 
-if barstate.isconfirmed and inSession and not riskyActive and not ideaActive
-    // Breakout long toward projected day high
-    if orBreakUp or vwapBreakUp
-        riskyLongScore += orBreakUp ? 28.0 : 18.0
-        riskyLongScore += vwapBreakUp ? 12.0 : 0.0
-        riskyLongScore += relVol >= 1.2 ? 10.0 : 4.0
-        riskyLongScore += (liveBias == "Bullish" or liveBias == "Extremely Bullish" or dayBias == "Bullish" or dayBias == "Extremely Bullish") ? 12.0 : 0.0
-        riskyLongScore += close > ema9 ? 8.0 : 0.0
-        riskyLongScore += (projHigh - close) >= atr * 1.2 ? 15.0 : 5.0  // room to proj high
-        riskyLongScore += riskySide != 1 ? 10.0 : -50.0
+if barstate.isconfirmed and inSession and not ideaActive
+    // --- Risky BUY: bottoms near buy zone / local low ---
+    if canRiskyBuy and nearBuyZone and atLocalLow
+        riskyLongScore += 25.0
+        riskyLongScore += bullReject ? 18.0 : 0.0
+        riskyLongScore += bullSweep ? 20.0 : 0.0
+        riskyLongScore += rsiOs ? 15.0 : rsi <= 50 ? 6.0 : -10.0
+        riskyLongScore += close > open ? 10.0 : -8.0
+        riskyLongScore += relVol >= 1.0 ? 8.0 : 2.0
+        riskyLongScore += close > ema9 ? 5.0 : 0.0
 
-    // Zone long that is close but not A+ (counter / early)
-    if inBuyZone and (bullSweep or bullReject) and longScore < passScore and longScore >= riskyMinScore
-        riskyLongScore := math.max(riskyLongScore, longScore * 0.85 + 5.0)
-        riskyLongScore += (liveBias == "Bearish" or dayBias == "Bearish") ? 8.0 : 0.0  // risky counter-trend bonus flag
-        riskyLongScore += riskySide != 1 ? 5.0 : -50.0
+    // Pivot low backup (even if A+ score failed)
+    if canRiskyBuy and isPL and pInBuy
+        riskyLongScore := math.max(riskyLongScore, 58.0)
+        riskyLongScore += pBullReject ? 12.0 : 4.0
+        riskyLongScore += pRsi <= 45 ? 10.0 : 0.0
 
-    // Momentum chase into stretch (very risky)
-    if stretchLong and relVol >= 1.25 and (dayBias == "Bullish" or dayBias == "Extremely Bullish")
-        riskyLongScore := math.max(riskyLongScore, 70.0)
-        riskyLongScore += (projHigh - close) >= atr ? 10.0 : -20.0
+    // --- Risky SELL: tops near sell zone / local high ---
+    if canRiskySell and nearSellZone and atLocalHigh
+        riskyShortScore += 25.0
+        riskyShortScore += bearReject ? 18.0 : 0.0
+        riskyShortScore += bearSweep ? 20.0 : 0.0
+        riskyShortScore += rsiOb ? 15.0 : rsi >= 50 ? 6.0 : -10.0
+        riskyShortScore += close < open ? 10.0 : -8.0
+        riskyShortScore += relVol >= 1.0 ? 8.0 : 2.0
+        riskyShortScore += close < ema9 ? 5.0 : 0.0
 
-    // Breakout short toward projected day low
-    if orBreakDn or vwapBreakDn
-        riskyShortScore += orBreakDn ? 28.0 : 18.0
-        riskyShortScore += vwapBreakDn ? 12.0 : 0.0
-        riskyShortScore += relVol >= 1.2 ? 10.0 : 4.0
-        riskyShortScore += (liveBias == "Bearish" or liveBias == "Extremely Bearish" or dayBias == "Bearish" or dayBias == "Extremely Bearish") ? 12.0 : 0.0
-        riskyShortScore += close < ema9 ? 8.0 : 0.0
-        riskyShortScore += (close - projLow) >= atr * 1.2 ? 15.0 : 5.0
-        riskyShortScore += riskySide != -1 ? 10.0 : -50.0
+    if canRiskySell and isPH and pInSell
+        riskyShortScore := math.max(riskyShortScore, 58.0)
+        riskyShortScore += pBearReject ? 12.0 : 4.0
+        riskyShortScore += pRsi >= 55 ? 10.0 : 0.0
 
-    if inSellZone and (bearSweep or bearReject) and shortScore < passScore and shortScore >= riskyMinScore
-        riskyShortScore := math.max(riskyShortScore, shortScore * 0.85 + 5.0)
-        riskyShortScore += (liveBias == "Bullish" or dayBias == "Bullish") ? 8.0 : 0.0
-        riskyShortScore += riskySide != -1 ? 5.0 : -50.0
+    // OR / VWAP break continuation (still risky, smaller targets)
+    if canRiskyBuy and orLocked and ta.crossover(close, nz(orHigh, high)) and close > open
+        riskyLongScore := math.max(riskyLongScore, 60.0)
+    if canRiskySell and orLocked and ta.crossunder(close, nz(orLow, low)) and close < open
+        riskyShortScore := math.max(riskyShortScore, 60.0)
 
-    if stretchShort and relVol >= 1.25 and (dayBias == "Bearish" or dayBias == "Extremely Bearish")
-        riskyShortScore := math.max(riskyShortScore, 70.0)
-        riskyShortScore += (close - projLow) >= atr ? 10.0 : -20.0
+riskyBuy = barstate.isconfirmed and inSession and not ideaActive and canRiskyBuy and riskyLongScore >= riskyMinScore and riskyLongScore >= riskyShortScore
+riskySell = barstate.isconfirmed and inSession and not ideaActive and canRiskySell and riskyShortScore >= riskyMinScore and riskyShortScore > riskyLongScore
 
-riskyBuy = barstate.isconfirmed and inSession and not riskyActive and not ideaActive and riskyLongScore >= riskyMinScore and riskyLongScore <= riskyMaxScore and riskyLongScore >= riskyShortScore
-riskySell = barstate.isconfirmed and inSession and not riskyActive and not ideaActive and riskyShortScore >= riskyMinScore and riskyShortScore <= riskyMaxScore and riskyShortScore > riskyLongScore
-
-// If score somehow exceeds A+ band on risky path, still allow as risky only when below passScore for zone path; breakouts can be up to riskyMaxScore
 if riskyBuy and riskySell
     if riskyLongScore >= riskyShortScore
         riskySell := false
@@ -662,13 +665,18 @@ if riskyBuy
     riskySide := 1
     riskySigBar := bar_index
     riskyEntry := close
-    riskyStop := math.min(low, nz(orLow, low), vwap) - atr * riskyStopAtr
+    riskyStop := low - atr * riskyStopAtr
     rRisk = math.max(riskyEntry - riskyStop, syminfo.mintick)
     riskyT1 := riskyEntry + rRisk * riskyT1R
-    riskyT2 := math.max(riskyEntry + rRisk * riskyT2R, math.min(projHigh, riskyEntry + rRisk * riskyT2R))
-    riskyT2 := math.max(riskyT2, riskyT1 + atr * 0.25)
+    riskyT2 := riskyEntry + rRisk * riskyT2R
+    if riskyT2 <= riskyT1
+        riskyT2 := riskyT1 + atr * 0.15
+    // Soft cap at sell zone / VWAP so targets stay scalp-sized
+    riskyT2 := math.min(riskyT2, math.max(vwap, sellZoneBot))
+    if riskyT2 <= riskyT1
+        riskyT2 := riskyEntry + rRisk * riskyT2R
     riskyTrade := "Long"
-    riskyConf := math.min(85.0, riskyLongScore)
+    riskyConf := math.min(84.0, riskyLongScore)
     riskyActive := true
     lastRTrade := "Long"
     lastREntry := riskyEntry
@@ -682,13 +690,17 @@ if riskySell
     riskySide := -1
     riskySigBar := bar_index
     riskyEntry := close
-    riskyStop := math.max(high, nz(orHigh, high), vwap) + atr * riskyStopAtr
+    riskyStop := high + atr * riskyStopAtr
     rRiskS = math.max(riskyStop - riskyEntry, syminfo.mintick)
     riskyT1 := riskyEntry - rRiskS * riskyT1R
-    riskyT2 := math.min(riskyEntry - rRiskS * riskyT2R, math.max(projLow, riskyEntry - rRiskS * riskyT2R))
-    riskyT2 := math.min(riskyT2, riskyT1 - atr * 0.25)
+    riskyT2 := riskyEntry - rRiskS * riskyT2R
+    if riskyT2 >= riskyT1
+        riskyT2 := riskyT1 - atr * 0.15
+    riskyT2 := math.max(riskyT2, math.min(vwap, buyZoneTop))
+    if riskyT2 >= riskyT1
+        riskyT2 := riskyEntry - rRiskS * riskyT2R
     riskyTrade := "Short"
-    riskyConf := math.min(85.0, riskyShortScore)
+    riskyConf := math.min(84.0, riskyShortScore)
     riskyActive := true
     lastRTrade := "Short"
     lastREntry := riskyEntry
@@ -709,10 +721,15 @@ if riskyActive
             riskyActive := false
             riskyTrade := "FLAT"
 
-// Invalidate risky if an A+ fires (A+ takes priority)
 if ideaActive and riskyActive
     riskyActive := false
     riskyTrade := "FLAT"
+
+// Chart markers for risky triggers
+if riskyBuy
+    label.new(bar_index, low, "Risky Buy", style=label.style_label_up, color=color.new(#FF6D00, 0), textcolor=color.white, size=FS, yloc=yloc.price)
+if riskySell
+    label.new(bar_index, high, "Risky Sell", style=label.style_label_down, color=color.new(#FF6D00, 0), textcolor=color.white, size=FS, yloc=yloc.price)
 
 //══════════════════════════════════════════════════════════════════════════════
 // A+ TRADE IDEA DASH FIELDS — ONLY when A+ live; otherwise "-"
@@ -883,20 +900,60 @@ else
         lastRiskyDash := na
 
 //══════════════════════════════════════════════════════════════════════════════
-// SHADOW CANDLE PROJECTION (checkbox) — full session from the open
-// Frozen at session open using ADR proj high/low + gap direction.
+// SHADOW CANDLE PROJECTION (checkbox)
+// Rebuilds on last bar when enabled. Projects full session from day open using
+// ADR high/low envelope + gap/open bias. Drawn with bar_time boxes + wicks.
 //══════════════════════════════════════════════════════════════════════════════
 var box[] shBodies = array.new_box()
 var line[] shWicks = array.new_line()
-var bool shBuilt = false
-var float shAnchorOpen = na
-var float shAnchorHigh = na
-var float shAnchorLow = na
+var int shBuiltForDay = na
+var float shO = na
+var float shHi = na
+var float shLo = na
 var int shDir = 0
-var int shStartT = na
-var int shBars = na
 
-f_clear_shadows() =>
+barMs = math.max(60000, int(minsPerBar * 60.0 * 1000.0))
+nShadow = math.max(2, math.min(90, int(math.round(shadowSessionMin / math.max(minsPerBar, 0.25)))))
+
+if newDay
+    shBuiltForDay := na
+    shO := na
+    shHi := na
+    shLo := na
+    shDir := 0
+
+// Freeze projection anchors once per day (at/near open)
+if showShadowCandles and inSession and na(shBuiltForDay) and not na(dayStartTime) and (newDay or barsFromOpen <= 2 or barstate.islast)
+    shO := nz(dayOpen, open)
+    // Use pure ADR envelope from open so path is stable at open
+    shHi := nz(dayOpen, open) + adrSafe
+    shLo := nz(dayOpen, open) - adrSafe
+    gap = shO - nz(pdc, shO)
+    shDir := math.abs(gap) < atr * 0.12 ? 0 : gap > 0 ? 1 : -1
+    shBuiltForDay := year(dayStartTime) * 10000 + month(dayStartTime) * 100 + dayofmonth(dayStartTime)
+
+f_path(prog, dir, o0, hi, lo) =>
+    // Realistic session shape: open drive → grind → late push/fade
+    out = o0
+    if dir > 0
+        // Bullish profile: rise into upper 70% by mid-late session
+        p1 = o0 + (hi - o0) * 0.35 * math.min(prog / 0.25, 1.0)
+        p2 = o0 + (hi - o0) * (0.35 + 0.45 * math.min(math.max(prog - 0.25, 0.0) / 0.45, 1.0))
+        p3 = p2 - (hi - o0) * 0.10 * math.min(math.max(prog - 0.70, 0.0) / 0.30, 1.0)
+        out := prog <= 0.25 ? p1 : prog <= 0.70 ? p2 : p3
+    else if dir < 0
+        p1 = o0 - (o0 - lo) * 0.35 * math.min(prog / 0.25, 1.0)
+        p2 = o0 - (o0 - lo) * (0.35 + 0.45 * math.min(math.max(prog - 0.25, 0.0) / 0.45, 1.0))
+        p3 = p2 + (o0 - lo) * 0.10 * math.min(math.max(prog - 0.70, 0.0) / 0.30, 1.0)
+        out := prog <= 0.25 ? p1 : prog <= 0.70 ? p2 : p3
+    else
+        mid = (hi + lo) * 0.5
+        amp = (hi - lo) * 0.22
+        out := mid + amp * math.sin(prog * math.pi * 2.0)
+    math.max(lo, math.min(hi, out))
+
+if barstate.islast
+    // Always clear old drawings first
     if array.size(shBodies) > 0
         for i = 0 to array.size(shBodies) - 1
             box.delete(array.get(shBodies, i))
@@ -906,79 +963,37 @@ f_clear_shadows() =>
             line.delete(array.get(shWicks, j))
         array.clear(shWicks)
 
-f_shadow_close(prog, dir, o0, hi, lo) =>
-    // prog in [0,1]; builds an intraday path toward extremes
-    px = o0
-    if dir > 0
-        wave = math.sin(prog * math.pi * 1.15)
-        px := o0 + (hi - o0) * (0.55 * prog + 0.45 * math.max(wave, 0.0)) - (hi - o0) * 0.08 * math.max(prog - 0.75, 0.0) / 0.25
-    else if dir < 0
-        wave = math.sin(prog * math.pi * 1.15)
-        px := o0 - (o0 - lo) * (0.55 * prog + 0.45 * math.max(wave, 0.0)) + (o0 - lo) * 0.08 * math.max(prog - 0.75, 0.0) / 0.25
-    else
-        mid = (hi + lo) * 0.5
-        amp = (hi - lo) * 0.28
-        px := mid + amp * math.sin(prog * math.pi * 2.0)
-    math.max(lo, math.min(hi, px))
-
-f_build_shadows(startT, nBars, barMs, o0, hi, lo, dir) =>
-    f_clear_shadows()
-    if nBars < 2 or na(startT) or barMs <= 0
-        false
-    else
-        prevC = o0
-        for i = 0 to nBars - 1
-            t1 = startT + i * barMs
+    if showShadowCandles and not na(dayStartTime) and not na(shO) and not na(shHi) and not na(shLo)
+        prevC = shO
+        for i = 0 to nShadow - 1
+            t1 = dayStartTime + i * barMs
             t2 = t1 + barMs - 1
-            prog0 = nBars <= 1 ? 0.0 : i / float(nBars - 1)
-            prog1 = nBars <= 1 ? 1.0 : math.min(1.0, (i + 1) / float(nBars - 1))
-            cOpen = i == 0 ? o0 : prevC
-            cClose = f_shadow_close(prog1, dir, o0, hi, lo)
-            // Wick model from path volatility
-            wick = math.max((hi - lo) * 0.02, atr * 0.12)
-            cHigh = math.max(cOpen, cClose) + wick * (0.35 + 0.65 * math.abs(math.sin((i + 1) * 0.7)))
-            cLow = math.min(cOpen, cClose) - wick * (0.35 + 0.65 * math.abs(math.cos((i + 1) * 0.7)))
-            cHigh := math.min(hi, cHigh)
-            cLow := math.max(lo, cLow)
+            prog = nShadow <= 1 ? 1.0 : (i + 1) / float(nShadow)
+            cOpen = i == 0 ? shO : prevC
+            cClose = f_path(prog, shDir, shO, shHi, shLo)
+            rng = math.max((shHi - shLo) * 0.015, atr * 0.10)
+            noise = 0.4 + 0.6 * math.abs(math.sin(i * 0.85))
+            cHigh = math.min(shHi, math.max(cOpen, cClose) + rng * noise)
+            cLow = math.max(shLo, math.min(cOpen, cClose) - rng * noise)
             bull = cClose >= cOpen
             bodyTop = math.max(cOpen, cClose)
             bodyBot = math.min(cOpen, cClose)
-            if bodyTop - bodyBot < syminfo.mintick
+            if bodyTop <= bodyBot
                 bodyTop := bodyBot + syminfo.mintick
-            b = box.new(t1, bodyTop, t2, bodyBot, xloc=xloc.bar_time, border_color=bull ? color.new(#26A69A, 40) : color.new(#EF5350, 40), bgcolor=bull ? shadowBullBody : shadowBearBody, border_width=1)
-            w = line.new(t1 + math.round(barMs * 0.5), cHigh, t1 + math.round(barMs * 0.5), cLow, xloc=xloc.bar_time, color=shadowWickCol, width=1)
+            // Past bars more faded, future brighter
+            isFuture = t1 >= time
+            bgBull = isFuture ? color.new(#26A69A, 68) : color.new(#26A69A, 88)
+            bgBear = isFuture ? color.new(#EF5350, 68) : color.new(#EF5350, 88)
+            bdCol = bull ? color.new(#26A69A, isFuture ? 35 : 70) : color.new(#EF5350, isFuture ? 35 : 70)
+            wkCol = color.new(#90A4AE, isFuture ? 40 : 75)
+            b = box.new(t1, bodyTop, t2, bodyBot, xloc=xloc.bar_time, bgcolor=bull ? bgBull : bgBear, border_color=bdCol, border_width=1)
+            midT = t1 + int(barMs * 0.5)
+            w = line.new(midT, cHigh, midT, cLow, xloc=xloc.bar_time, color=wkCol, width=1)
             array.push(shBodies, b)
             array.push(shWicks, w)
             prevC := cClose
-        true
-
-barMs = math.max(1, int(minsPerBar * 60.0 * 1000.0))
-shadowBarsNeeded = math.max(2, int(math.round(shadowSessionMin / math.max(minsPerBar, 0.25))))
-shadowBarsNeeded := math.min(shadowBarsNeeded, 150)
-
-if newDay
-    shBuilt := false
-    f_clear_shadows()
-
-// Build once at session open (or when enabled mid-session on first opportunity)
-needShadowBuild = showShadowCandles and not shBuilt and not na(dayStartTime) and (newDay or barsFromOpen <= 1 or (barstate.islast and inSession))
-if needShadowBuild and showShadowCandles
-    shAnchorOpen := nz(dayOpen, open)
-    shAnchorHigh := projHigh
-    shAnchorLow := projLow
-    gap = shAnchorOpen - nz(pdc, shAnchorOpen)
-    shDir := math.abs(gap) < atr * 0.15 ? 0 : gap > 0 ? 1 : -1
-    shStartT := dayStartTime
-    shBars := shadowBarsNeeded
-    built = f_build_shadows(shStartT, shBars, barMs, shAnchorOpen, shAnchorHigh, shAnchorLow, shDir)
-    shBuilt := built
-
-if not showShadowCandles
-    if shBuilt or array.size(shBodies) > 0
-        f_clear_shadows()
-    shBuilt := false
 
 alertcondition(buySignal, title="A+ BUY scalp", message="IALGO A+ BUY {{ticker}} @ {{close}}")
 alertcondition(sellSignal, title="A+ SELL scalp", message="IALGO A+ SELL {{ticker}} @ {{close}}")
-alertcondition(riskyBuy, title="Risky Long", message="IALGO RISKY LONG {{ticker}} @ {{close}}")
-alertcondition(riskySell, title="Risky Short", message="IALGO RISKY SHORT {{ticker}} @ {{close}}")
+alertcondition(riskyBuy, title="Risky Buy", message="IALGO Risky Buy {{ticker}} @ {{close}}")
+alertcondition(riskySell, title="Risky Sell", message="IALGO Risky Sell {{ticker}} @ {{close}}")
