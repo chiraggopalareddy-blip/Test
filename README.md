@@ -6,15 +6,13 @@
 
 [`indicators/InstitutionalBuySell.pine`](indicators/InstitutionalBuySell.pine)
 
-## Trade Idea (bottom-right)
+## Right-side trade tables
 
-Populates **only** when an A+ Long/Short is active:
+**A+ Trade Ideas** (middle-right) — fills only on a live A+ Long/Short; else `-`.
 
-- Trade · Entry · Stop · Target 1 · Target 2 · Confidence (`xx.x%`)
+**Risky Trades** (bottom-right) — high risk / high reward ideas (OR/VWAP breakouts, near-A+ zone attempts, momentum stretch). Wider targets toward projected day high/low. Fills only when a risky setup is live; else `-`. Cleared if an A+ takes over.
 
-Otherwise every value is `-`.
-
-Clears when stop/T2 hit, max hold bars, or session ends.
+Both show: Trade · Entry · Stop · Target 1 · Target 2 · Confidence (`xx.x%`).
 
 ## Signals (5m scalping)
 

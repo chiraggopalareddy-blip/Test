@@ -38,6 +38,14 @@ stopAtrMult   = input.float(0.35, "Stop beyond extreme (ATR)", minval=0.15, step
 t1R           = input.float(1.2, "Target 1 R", minval=0.8, step=0.1, group=grpRisk)
 t2R           = input.float(2.0, "Target 2 R", minval=1.2, step=0.1, group=grpRisk)
 
+grpRisky = "Risky Trades (High Risk / High Reward)"
+riskyMinScore = input.float(62.0, "Risky Min Score", minval=50, maxval=85, group=grpRisky)
+riskyMaxScore = input.float(87.0, "Risky Max Score (below A+)", minval=70, maxval=95, group=grpRisky)
+riskyStopAtr  = input.float(0.55, "Risky Stop (ATR)", minval=0.25, step=0.05, group=grpRisky)
+riskyT1R      = input.float(2.0, "Risky Target 1 R", minval=1.2, step=0.1, group=grpRisky)
+riskyT2R      = input.float(3.5, "Risky Target 2 R", minval=2.0, step=0.1, group=grpRisky)
+riskyHoldBars = input.int(36, "Risky Max Hold Bars", minval=8, maxval=78, group=grpRisky)
+
 grpVis = "Colors"
 bullCol  = input.color(#089981, "Bull", group=grpVis)
 bearCol  = input.color(#F23645, "Bear", group=grpVis)
@@ -517,7 +525,138 @@ if not ideaActive
 plot(ema21, "EMA21", color=color.new(#78909C, 60))
 
 //══════════════════════════════════════════════════════════════════════════════
-// TRADE IDEA — ONLY when A+ setup is live; otherwise "-"
+// RISKY TRADES — high risk / high reward (dynamic, session-only)
+// Separate from A+. Populates only when a risky setup is live; else "-".
+// Paths: (1) aggressive OR/VWAP breakout toward proj H/L
+//        (2) near-A+ zone attempt that didn't clear A+ score
+//══════════════════════════════════════════════════════════════════════════════
+var string riskyTrade = "FLAT"
+var float riskyEntry = na
+var float riskyStop = na
+var float riskyT1 = na
+var float riskyT2 = na
+var float riskyConf = 0.0
+var bool riskyActive = false
+var int riskySigBar = na
+var int riskySide = 0  // 1 long, -1 short
+
+if newDay
+    riskyTrade := "FLAT"
+    riskyActive := false
+    riskyEntry := na
+    riskyStop := na
+    riskyT1 := na
+    riskyT2 := na
+    riskyConf := 0.0
+    riskySigBar := na
+    riskySide := 0
+
+// Breakout / breakdown momentum (HRHR)
+orBreakUp = orLocked and ta.crossover(close, nz(orHigh, high)) and relVol >= 1.05 and close > open
+orBreakDn = orLocked and ta.crossunder(close, nz(orLow, low)) and relVol >= 1.05 and close < open
+vwapBreakUp = ta.crossover(close, vwap) and close > nz(dayOpen, open) and relVol >= 1.1 and diBull
+vwapBreakDn = ta.crossunder(close, vwap) and close < nz(dayOpen, open) and relVol >= 1.1 and diBear
+stretchLong = close >= vwapU1 and close > open and high >= nz(dayHigh, high) - atr * 0.15
+stretchShort = close <= vwapL1 and close < open and low <= nz(dayLow, low) + atr * 0.15
+
+riskyLongScore = 0.0
+riskyShortScore = 0.0
+
+if barstate.isconfirmed and inSession and not riskyActive and not ideaActive
+    // Breakout long toward projected day high
+    if orBreakUp or vwapBreakUp
+        riskyLongScore += orBreakUp ? 28.0 : 18.0
+        riskyLongScore += vwapBreakUp ? 12.0 : 0.0
+        riskyLongScore += relVol >= 1.2 ? 10.0 : 4.0
+        riskyLongScore += (liveBias == "Bullish" or liveBias == "Extremely Bullish" or dayBias == "Bullish" or dayBias == "Extremely Bullish") ? 12.0 : 0.0
+        riskyLongScore += close > ema9 ? 8.0 : 0.0
+        riskyLongScore += (projHigh - close) >= atr * 1.2 ? 15.0 : 5.0  // room to proj high
+        riskyLongScore += riskySide != 1 ? 10.0 : -50.0
+
+    // Zone long that is close but not A+ (counter / early)
+    if inBuyZone and (bullSweep or bullReject) and longScore < passScore and longScore >= riskyMinScore
+        riskyLongScore := math.max(riskyLongScore, longScore * 0.85 + 5.0)
+        riskyLongScore += (liveBias == "Bearish" or dayBias == "Bearish") ? 8.0 : 0.0  // risky counter-trend bonus flag
+        riskyLongScore += riskySide != 1 ? 5.0 : -50.0
+
+    // Momentum chase into stretch (very risky)
+    if stretchLong and relVol >= 1.25 and (dayBias == "Bullish" or dayBias == "Extremely Bullish")
+        riskyLongScore := math.max(riskyLongScore, 70.0)
+        riskyLongScore += (projHigh - close) >= atr ? 10.0 : -20.0
+
+    // Breakout short toward projected day low
+    if orBreakDn or vwapBreakDn
+        riskyShortScore += orBreakDn ? 28.0 : 18.0
+        riskyShortScore += vwapBreakDn ? 12.0 : 0.0
+        riskyShortScore += relVol >= 1.2 ? 10.0 : 4.0
+        riskyShortScore += (liveBias == "Bearish" or liveBias == "Extremely Bearish" or dayBias == "Bearish" or dayBias == "Extremely Bearish") ? 12.0 : 0.0
+        riskyShortScore += close < ema9 ? 8.0 : 0.0
+        riskyShortScore += (close - projLow) >= atr * 1.2 ? 15.0 : 5.0
+        riskyShortScore += riskySide != -1 ? 10.0 : -50.0
+
+    if inSellZone and (bearSweep or bearReject) and shortScore < passScore and shortScore >= riskyMinScore
+        riskyShortScore := math.max(riskyShortScore, shortScore * 0.85 + 5.0)
+        riskyShortScore += (liveBias == "Bullish" or dayBias == "Bullish") ? 8.0 : 0.0
+        riskyShortScore += riskySide != -1 ? 5.0 : -50.0
+
+    if stretchShort and relVol >= 1.25 and (dayBias == "Bearish" or dayBias == "Extremely Bearish")
+        riskyShortScore := math.max(riskyShortScore, 70.0)
+        riskyShortScore += (close - projLow) >= atr ? 10.0 : -20.0
+
+riskyBuy = barstate.isconfirmed and inSession and not riskyActive and not ideaActive and riskyLongScore >= riskyMinScore and riskyLongScore <= riskyMaxScore and riskyLongScore >= riskyShortScore
+riskySell = barstate.isconfirmed and inSession and not riskyActive and not ideaActive and riskyShortScore >= riskyMinScore and riskyShortScore <= riskyMaxScore and riskyShortScore > riskyLongScore
+
+// If score somehow exceeds A+ band on risky path, still allow as risky only when below passScore for zone path; breakouts can be up to riskyMaxScore
+if riskyBuy and riskySell
+    if riskyLongScore >= riskyShortScore
+        riskySell := false
+    else
+        riskyBuy := false
+
+if riskyBuy
+    riskySide := 1
+    riskySigBar := bar_index
+    riskyEntry := close
+    riskyStop := math.min(low, nz(orLow, low), vwap) - atr * riskyStopAtr
+    rRisk = math.max(riskyEntry - riskyStop, syminfo.mintick)
+    riskyT1 := riskyEntry + rRisk * riskyT1R
+    riskyT2 := math.max(riskyEntry + rRisk * riskyT2R, math.min(projHigh, riskyEntry + rRisk * riskyT2R))
+    riskyT2 := math.max(riskyT2, riskyT1 + atr * 0.25)
+    riskyTrade := "Long"
+    riskyConf := math.min(85.0, riskyLongScore)
+    riskyActive := true
+
+if riskySell
+    riskySide := -1
+    riskySigBar := bar_index
+    riskyEntry := close
+    riskyStop := math.max(high, nz(orHigh, high), vwap) + atr * riskyStopAtr
+    rRiskS = math.max(riskyStop - riskyEntry, syminfo.mintick)
+    riskyT1 := riskyEntry - rRiskS * riskyT1R
+    riskyT2 := math.min(riskyEntry - rRiskS * riskyT2R, math.max(projLow, riskyEntry - rRiskS * riskyT2R))
+    riskyT2 := math.min(riskyT2, riskyT1 - atr * 0.25)
+    riskyTrade := "Short"
+    riskyConf := math.min(85.0, riskyShortScore)
+    riskyActive := true
+
+if riskyActive
+    rHeld = bar_index - nz(riskySigBar, bar_index)
+    if riskyTrade == "Long"
+        if close <= riskyStop or close >= riskyT2 or rHeld >= riskyHoldBars or not inSession
+            riskyActive := false
+            riskyTrade := "FLAT"
+    else if riskyTrade == "Short"
+        if close >= riskyStop or close <= riskyT2 or rHeld >= riskyHoldBars or not inSession
+            riskyActive := false
+            riskyTrade := "FLAT"
+
+// Invalidate risky if an A+ fires (A+ takes priority)
+if ideaActive and riskyActive
+    riskyActive := false
+    riskyTrade := "FLAT"
+
+//══════════════════════════════════════════════════════════════════════════════
+// A+ TRADE IDEA DASH FIELDS — ONLY when A+ live; otherwise "-"
 //══════════════════════════════════════════════════════════════════════════════
 dashTrade = ideaActive ? activeTrade : "-"
 dashEntry = ideaActive and not na(entryPrice) ? str.tostring(entryPrice, format.mintick) : "-"
@@ -527,6 +666,15 @@ dashT2    = ideaActive and not na(t2Price) ? str.tostring(t2Price, format.mintic
 dashConf  = ideaActive ? str.tostring(confidence, "#.0") + "%" : "-"
 dashTradeCol = ideaActive ? (activeTrade == "Long" ? bullCol : bearCol) : color.gray
 dashConfCol = ideaActive ? (confidence >= 90 ? bullCol : confidence >= 88 ? color.orange : bearCol) : color.gray
+
+rDashTrade = riskyActive ? riskyTrade : "-"
+rDashEntry = riskyActive and not na(riskyEntry) ? str.tostring(riskyEntry, format.mintick) : "-"
+rDashStop  = riskyActive and not na(riskyStop) ? str.tostring(riskyStop, format.mintick) : "-"
+rDashT1    = riskyActive and not na(riskyT1) ? str.tostring(riskyT1, format.mintick) : "-"
+rDashT2    = riskyActive and not na(riskyT2) ? str.tostring(riskyT2, format.mintick) : "-"
+rDashConf  = riskyActive ? str.tostring(riskyConf, "#.0") + "%" : "-"
+rDashTradeCol = riskyActive ? (riskyTrade == "Long" ? bullCol : bearCol) : color.gray
+rDashConfCol = riskyActive ? color.orange : color.gray
 
 //══════════════════════════════════════════════════════════════════════════════
 // TOP-RIGHT DASHBOARD
@@ -553,28 +701,58 @@ if barstate.islast
     table.cell(topDash, 1, 5, str.tostring(projRange, format.mintick), text_color=color.white, text_size=FS)
 
 //══════════════════════════════════════════════════════════════════════════════
-// BOTTOM-RIGHT — Current Trade Idea (A+ only)
+// RIGHT SIDE TABLES
+// A+ Trade Ideas (middle-right)  |  Risky Trades (bottom-right, below)
 //══════════════════════════════════════════════════════════════════════════════
-var table botDash = table.new(position.bottom_right, 2, 6, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#455A64, 50))
+var table aPlusDash = table.new(position.middle_right, 2, 7, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#455A64, 50))
+var table riskyDash = table.new(position.bottom_right, 2, 7, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#FF6D00, 55))
 
 if barstate.islast
-    table.cell(botDash, 0, 0, "Trade Idea", text_color=color.gray, text_size=FS)
-    table.cell(botDash, 1, 0, dashTrade, text_color=dashTradeCol, text_size=FS)
+    // —— A+ Trade Ideas ——
+    table.cell(aPlusDash, 0, 0, "A+ Trade Ideas", text_color=color.white, text_size=FS, bgcolor=color.new(bullCol, 75))
+    table.cell(aPlusDash, 1, 0, "", text_color=color.white, text_size=FS, bgcolor=color.new(bullCol, 75))
 
-    table.cell(botDash, 0, 1, "Entry", text_color=color.gray, text_size=FS)
-    table.cell(botDash, 1, 1, dashEntry, text_color=color.white, text_size=FS)
+    table.cell(aPlusDash, 0, 1, "Trade", text_color=color.gray, text_size=FS)
+    table.cell(aPlusDash, 1, 1, dashTrade, text_color=dashTradeCol, text_size=FS)
 
-    table.cell(botDash, 0, 2, "Stop", text_color=color.gray, text_size=FS)
-    table.cell(botDash, 1, 2, dashStop, text_color=ideaActive ? bearCol : color.gray, text_size=FS)
+    table.cell(aPlusDash, 0, 2, "Entry", text_color=color.gray, text_size=FS)
+    table.cell(aPlusDash, 1, 2, dashEntry, text_color=color.white, text_size=FS)
 
-    table.cell(botDash, 0, 3, "Target 1", text_color=color.gray, text_size=FS)
-    table.cell(botDash, 1, 3, dashT1, text_color=ideaActive ? bullCol : color.gray, text_size=FS)
+    table.cell(aPlusDash, 0, 3, "Stop", text_color=color.gray, text_size=FS)
+    table.cell(aPlusDash, 1, 3, dashStop, text_color=ideaActive ? bearCol : color.gray, text_size=FS)
 
-    table.cell(botDash, 0, 4, "Target 2", text_color=color.gray, text_size=FS)
-    table.cell(botDash, 1, 4, dashT2, text_color=ideaActive ? bullCol : color.gray, text_size=FS)
+    table.cell(aPlusDash, 0, 4, "Target 1", text_color=color.gray, text_size=FS)
+    table.cell(aPlusDash, 1, 4, dashT1, text_color=ideaActive ? bullCol : color.gray, text_size=FS)
 
-    table.cell(botDash, 0, 5, "Confidence", text_color=color.gray, text_size=FS)
-    table.cell(botDash, 1, 5, dashConf, text_color=dashConfCol, text_size=FS)
+    table.cell(aPlusDash, 0, 5, "Target 2", text_color=color.gray, text_size=FS)
+    table.cell(aPlusDash, 1, 5, dashT2, text_color=ideaActive ? bullCol : color.gray, text_size=FS)
+
+    table.cell(aPlusDash, 0, 6, "Confidence", text_color=color.gray, text_size=FS)
+    table.cell(aPlusDash, 1, 6, dashConf, text_color=dashConfCol, text_size=FS)
+
+    // —— Risky Trades ——
+    table.cell(riskyDash, 0, 0, "Risky Trades", text_color=color.white, text_size=FS, bgcolor=color.new(#FF6D00, 70))
+    table.cell(riskyDash, 1, 0, "", text_color=color.white, text_size=FS, bgcolor=color.new(#FF6D00, 70))
+
+    table.cell(riskyDash, 0, 1, "Trade", text_color=color.gray, text_size=FS)
+    table.cell(riskyDash, 1, 1, rDashTrade, text_color=rDashTradeCol, text_size=FS)
+
+    table.cell(riskyDash, 0, 2, "Entry", text_color=color.gray, text_size=FS)
+    table.cell(riskyDash, 1, 2, rDashEntry, text_color=color.white, text_size=FS)
+
+    table.cell(riskyDash, 0, 3, "Stop", text_color=color.gray, text_size=FS)
+    table.cell(riskyDash, 1, 3, rDashStop, text_color=riskyActive ? bearCol : color.gray, text_size=FS)
+
+    table.cell(riskyDash, 0, 4, "Target 1", text_color=color.gray, text_size=FS)
+    table.cell(riskyDash, 1, 4, rDashT1, text_color=riskyActive ? #FF6D00 : color.gray, text_size=FS)
+
+    table.cell(riskyDash, 0, 5, "Target 2", text_color=color.gray, text_size=FS)
+    table.cell(riskyDash, 1, 5, rDashT2, text_color=riskyActive ? #FF6D00 : color.gray, text_size=FS)
+
+    table.cell(riskyDash, 0, 6, "Confidence", text_color=color.gray, text_size=FS)
+    table.cell(riskyDash, 1, 6, rDashConf, text_color=rDashConfCol, text_size=FS)
 
 alertcondition(buySignal, title="A+ BUY scalp", message="IALGO A+ BUY {{ticker}} @ {{close}}")
 alertcondition(sellSignal, title="A+ SELL scalp", message="IALGO A+ SELL {{ticker}} @ {{close}}")
+alertcondition(riskyBuy, title="Risky Long", message="IALGO RISKY LONG {{ticker}} @ {{close}}")
+alertcondition(riskySell, title="Risky Short", message="IALGO RISKY SHORT {{ticker}} @ {{close}}")
