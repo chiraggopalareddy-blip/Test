@@ -61,6 +61,11 @@ bearCol  = input.color(#F23645, "Bear", group=grpVis)
 zoneBuyC = input.color(color.new(#089981, 85), "Buy Zone", group=grpVis)
 zoneSellC= input.color(color.new(#F23645, 85), "Sell Zone", group=grpVis)
 
+grpOi = "Nifty Futures OI"
+futSymbol   = input.symbol("NSE:NIFTY1!", "Futures Symbol (OI)", group=grpOi, tooltip="Continuous Nifty futures with OI. Change if your feed uses another ticker.")
+oiLookback  = input.int(3, "OI Regime Lookback (bars)", minval=1, maxval=12, group=grpOi)
+showOiBlock = input.bool(true, "Show Futures OI Block", group=grpOi)
+
 FS = size.tiny   // compact tables — avoids overlap on TradingView
 FS_LBL = size.tiny
 
@@ -322,6 +327,86 @@ controlWho = controlSide == 1 ? "Buyers" : controlSide == -1 ? "Sellers" : "Bala
 controlTimeStr = not na(controlSince) ? str.format_time(controlSince, "HH:mm") : "--:--"
 controlTxt = controlSide == 0 ? "Waiting for control..." : controlWho + " " + controlVerb + " " + controlTimeStr
 controlCol = controlSide == 1 ? bullCol : controlSide == -1 ? bearCol : color.gray
+
+//══════════════════════════════════════════════════════════════════════════════
+// NIFTY FUTURES OI + PRICE REGIMES (last 3 entries with timestamps)
+//══════════════════════════════════════════════════════════════════════════════
+f_fmt_inr_qty(v) =>
+    ad = math.abs(v)
+    ad >= 10000000.0 ? str.tostring(v / 10000000.0, "#.##") + "Cr" : ad >= 100000.0 ? str.tostring(v / 100000.0, "#.##") + "L" : ad >= 1000.0 ? str.tostring(v / 1000.0, "#.##") + "K" : str.tostring(v, "#")
+
+[futOi, futClose] = request.security(futSymbol, timeframe.period, [openinterest, close], barmerge.gaps_off, barmerge.lookahead_off)
+
+oiNow = nz(futOi)
+oiPrev = nz(futOi[oiLookback])
+oiDelta = oiNow - oiPrev
+pxDelta = close - close[oiLookback]
+oiBarDelta = oiNow - nz(futOi[1])
+
+oiRising = oiDelta > 0
+oiFalling = oiDelta < 0
+pxUp = pxDelta > 0
+pxDn = pxDelta < 0
+
+oiRegime = "Flat"
+oiRead = "Waiting for OI..."
+oiRegCol = color.gray
+if not na(futOi) and oiNow > 0
+    if pxUp and oiRising
+        oiRegime := "Long Buildup"
+        oiRead := "Buyers adding longs"
+        oiRegCol := bullCol
+    else if pxDn and oiRising
+        oiRegime := "Short Buildup"
+        oiRead := "Sellers adding on dips"
+        oiRegCol := bearCol
+    else if pxUp and oiFalling
+        oiRegime := "Short Covering"
+        oiRead := "Shorts exiting on bounce"
+        oiRegCol := color.new(#26A69A, 0)
+    else if pxDn and oiFalling
+        oiRegime := "Long Unwinding"
+        oiRead := "Longs exiting into fall"
+        oiRegCol := color.new(#FF9800, 0)
+    else
+        oiRegime := "Flat"
+        oiRead := "No clear OI regime"
+        oiRegCol := color.gray
+else
+    oiRegime := "N/A"
+    oiRead := "OI unavailable — check futures symbol"
+    oiRegCol := color.gray
+
+oiArrow = oiBarDelta > 0 ? " ▲" : oiBarDelta < 0 ? " ▼" : " ■"
+oiDeltaSign = oiBarDelta > 0 ? "+" : ""
+futOiTxt = na(futOi) or oiNow <= 0 ? "OI n/a — set futures symbol" : f_fmt_inr_qty(oiNow) + "  Δ " + oiDeltaSign + f_fmt_inr_qty(oiBarDelta) + oiArrow
+futOiCol = oiBarDelta > 0 ? bullCol : oiBarDelta < 0 ? bearCol : color.white
+
+var string oiLog1 = "-"
+var string oiLog2 = "-"
+var string oiLog3 = "-"
+var color oiLogCol1 = color.gray
+var color oiLogCol2 = color.gray
+var color oiLogCol3 = color.gray
+var string oiLastRegime = ""
+
+if newDay
+    oiLog1 := "-"
+    oiLog2 := "-"
+    oiLog3 := "-"
+    oiLogCol1 := color.gray
+    oiLogCol2 := color.gray
+    oiLogCol3 := color.gray
+    oiLastRegime := ""
+
+if inSession and barstate.isconfirmed and oiRegime != "N/A" and oiRegime != "Flat" and oiRegime != oiLastRegime
+    oiLog3 := oiLog2
+    oiLogCol3 := oiLogCol2
+    oiLog2 := oiLog1
+    oiLogCol2 := oiLogCol1
+    oiLog1 := str.format_time(time, "HH:mm") + "  " + oiRegime
+    oiLogCol1 := oiRegCol
+    oiLastRegime := oiRegime
 
 //══════════════════════════════════════════════════════════════════════════════
 // A+ INTRADAY SCALP SIGNALS (5m) — non-repaint, session-only
@@ -798,7 +883,7 @@ rDashConfCol = riskyActive ? color.orange : color.gray
 //══════════════════════════════════════════════════════════════════════════════
 // TOP-RIGHT DASHBOARD
 //══════════════════════════════════════════════════════════════════════════════
-var table topDash = table.new(position.top_right, 2, 7, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#455A64, 50))
+var table topDash = table.new(position.top_right, 2, 12, bgcolor=color.new(#0D1117, 0), border_width=1, border_color=color.new(#455A64, 50))
 
 if barstate.islast
     table.cell(topDash, 0, 0, "Live Bias", text_color=color.gray, text_size=FS)
@@ -810,17 +895,32 @@ if barstate.islast
     table.cell(topDash, 0, 2, "Control", text_color=color.gray, text_size=FS)
     table.cell(topDash, 1, 2, controlTxt, text_color=controlCol, text_size=FS)
 
-    table.cell(topDash, 0, 3, "What to do?", text_color=color.gray, text_size=FS)
-    table.cell(topDash, 1, 3, whatToDo, text_color=color.white, text_size=FS)
+    table.cell(topDash, 0, 3, "Futures OI", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 3, showOiBlock ? futOiTxt : "-", text_color=showOiBlock ? futOiCol : color.gray, text_size=FS)
 
-    table.cell(topDash, 0, 4, "Projected Day High", text_color=color.gray, text_size=FS)
-    table.cell(topDash, 1, 4, str.tostring(projHigh, format.mintick), text_color=bearCol, text_size=FS)
+    table.cell(topDash, 0, 4, "OI Regime", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 4, showOiBlock ? oiLog1 : "-", text_color=showOiBlock ? oiLogCol1 : color.gray, text_size=FS)
 
-    table.cell(topDash, 0, 5, "Projected Day Low", text_color=color.gray, text_size=FS)
-    table.cell(topDash, 1, 5, str.tostring(projLow, format.mintick), text_color=bullCol, text_size=FS)
+    table.cell(topDash, 0, 5, "OI Regime", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 5, showOiBlock ? oiLog2 : "-", text_color=showOiBlock ? oiLogCol2 : color.gray, text_size=FS)
 
-    table.cell(topDash, 0, 6, "Day Range", text_color=color.gray, text_size=FS)
-    table.cell(topDash, 1, 6, str.tostring(projRange, format.mintick), text_color=color.white, text_size=FS)
+    table.cell(topDash, 0, 6, "OI Regime", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 6, showOiBlock ? oiLog3 : "-", text_color=showOiBlock ? oiLogCol3 : color.gray, text_size=FS)
+
+    table.cell(topDash, 0, 7, "OI Read", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 7, showOiBlock ? oiRead : "-", text_color=showOiBlock ? oiRegCol : color.gray, text_size=FS)
+
+    table.cell(topDash, 0, 8, "What to do?", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 8, whatToDo, text_color=color.white, text_size=FS)
+
+    table.cell(topDash, 0, 9, "Projected Day High", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 9, str.tostring(projHigh, format.mintick), text_color=bearCol, text_size=FS)
+
+    table.cell(topDash, 0, 10, "Projected Day Low", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 10, str.tostring(projLow, format.mintick), text_color=bullCol, text_size=FS)
+
+    table.cell(topDash, 0, 11, "Day Range", text_color=color.gray, text_size=FS)
+    table.cell(topDash, 1, 11, str.tostring(projRange, format.mintick), text_color=color.white, text_size=FS)
 
 //══════════════════════════════════════════════════════════════════════════════
 // RIGHT SIDE — two separate tables, stacked lower (middle then bottom)
